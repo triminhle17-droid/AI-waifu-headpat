@@ -148,3 +148,19 @@
                     if (hitTestResults.length > 0) {
                         const hit = hitTestResults[0];
                         reticle.visible = true;
+                        reticle.matrix.fromArray(hit.getPose(referenceSpace).transform.matrix);
+                    } else {
+                        reticle.visible = false;
+                    }
+                }
+            }
+
+            if (currentVrm) {
+                currentVrm.update(0.016);
+            }
+
+            renderer.render(scene, camera);
+        }
+    </script>
+</body>
+</html>
