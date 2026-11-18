@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-    <title>WebAR VRM Floor Placement with Depth Sensing</title>
+    <title>WebAR VRM Floor Placement Fixed</title>
     <style>
         body { margin: 0; overflow: hidden; background: #000; font-family: sans-serif; }
         #info {
@@ -20,7 +20,7 @@
     </style>
 </head>
 <body>
-    <div id="info">Nhấn nút bên dưới để khởi động AR</div>
+    <div id="info">Quét sàn nhà và nhấn màn hình để đặt nhân vật</div>
     <button id="ar-button">BẮT ĐẦU AR</button>
 
     <!-- Thư viện Three.js & VRM -->
@@ -52,16 +52,14 @@
             renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
             renderer.setPixelRatio(window.devicePixelRatio);
             renderer.setSize(window.innerWidth, window.innerHeight);
-            renderer.xr.enabled = true; // Bật chế độ WebXR
+            renderer.xr.enabled = true;
             container.appendChild(renderer.domElement);
 
-            // Ánh sáng cho mô hình
             const light = new THREE.DirectionalLight(0xffffff, Math.PI);
             light.position.set(1, 2, 1).normalize();
             scene.add(light);
             scene.add(new THREE.AmbientLight(0xffffff, 0.8));
 
-            // Tải file model.vrm
             const loader = new THREE.GLTFLoader();
             loader.load('model.vrm', (gltf) => {
                 THREE.VRM.from(gltf).then((vrm) => {
@@ -71,7 +69,6 @@
                 console.error('Lỗi tải VRM:', error);
             });
 
-            // Tạo vòng tròn định vị mặt đất (Reticle)
             reticle = new THREE.Mesh(
                 new THREE.RingGeometry(0.15, 0.2, 32).rotateX(- Math.PI / 2),
                 new THREE.MeshBasicMaterial({ color: 0xffffff })
@@ -80,7 +77,6 @@
             reticle.visible = false;
             scene.add(reticle);
 
-            // Cấu hình WebXR AR với tính năng quét sàn (hit-test) và đo chiều sâu (depth-sensing)
             const arButtonOptions = {
                 requiredFeatures: ['hit-test'],
                 optionalFeatures: ['dom-overlay', 'depth-sensing'],
@@ -89,7 +85,6 @@
 
             document.body.appendChild(ARButton.createButton(renderer, arButtonOptions));
 
-            // Bắt sự kiện chạm màn hình điện thoại để đặt mô hình xuống vị trí vòng tròn
             controller = renderer.xr.getController(0);
             controller.addEventListener('select', onSelect);
             scene.add(controller);
@@ -100,8 +95,16 @@
         function onSelect() {
             if (reticle.visible && currentVrm) {
                 scene.add(currentVrm.scene);
+                
+                // Đặt vị trí theo vòng tròn quét mặt phẳng
                 currentVrm.scene.position.setFromMatrixPosition(reticle.matrix);
+                
+                // Xoay hướng mặt nhân vật đối diện với camera
                 currentVrm.scene.quaternion.setFromRotationMatrix(reticle.matrix);
+                currentVrm.scene.rotateY(Math.PI); 
+
+                // Thu nhỏ kích thước tỷ lệ vừa vặn (0.6)
+                currentVrm.scene.scale.set(0.6, 0.6, 0.6);
                 
                 reticle.visible = false;
                 document.getElementById('info').innerText = 'Đã đặt nhân vật xuống sàn!';
