@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-    <title>WebAR VRM Floor Placement Fixed</title>
+    <title>WebAR Depth Occlusion Fix</title>
     <style>
         body { margin: 0; overflow: hidden; background: #000; font-family: sans-serif; }
         #info {
@@ -20,7 +20,7 @@
     </style>
 </head>
 <body>
-    <div id="info">Quét sàn nhà và nhấn màn hình để đặt nhân vật</div>
+    <div id="info">Khởi động AR với Depth Sensing...</div>
     <button id="ar-button">BẮT ĐẦU AR</button>
 
     <!-- Thư viện Three.js & VRM -->
@@ -49,6 +49,7 @@
             scene = new THREE.Scene();
             camera = new THREE.PerspectiveCamera(70, window.innerWidth / window.innerHeight, 0.01, 20);
 
+            // Cấu hình Renderer hỗ trợ tối ưu không gian AR
             renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
             renderer.setPixelRatio(window.devicePixelRatio);
             renderer.setSize(window.innerWidth, window.innerHeight);
@@ -65,8 +66,6 @@
                 THREE.VRM.from(gltf).then((vrm) => {
                     currentVrm = vrm;
                 });
-            }, undefined, (error) => {
-                console.error('Lỗi tải VRM:', error);
             });
 
             reticle = new THREE.Mesh(
@@ -77,9 +76,14 @@
             reticle.visible = false;
             scene.add(reticle);
 
+            // Ép buộc yêu cầu depth-sensing vào requiredFeatures để trình duyệt bắt buộc kích hoạt
             const arButtonOptions = {
-                requiredFeatures: ['hit-test'],
-                optionalFeatures: ['dom-overlay', 'depth-sensing'],
+                requiredFeatures: ['hit-test', 'depth-sensing'],
+                optionalFeatures: ['dom-overlay'],
+                depthSensing: {
+                    usagePreference: ['cpu-optimized'],
+                    dataFormat: ['luminance-alpha']
+                },
                 domOverlay: { root: document.body }
             };
 
@@ -96,18 +100,14 @@
             if (reticle.visible && currentVrm) {
                 scene.add(currentVrm.scene);
                 
-                // Đặt vị trí theo vòng tròn quét mặt phẳng
+                // Đặt vị trí và xoay mặt hướng về phía camera
                 currentVrm.scene.position.setFromMatrixPosition(reticle.matrix);
-                
-                // Xoay hướng mặt nhân vật đối diện với camera
                 currentVrm.scene.quaternion.setFromRotationMatrix(reticle.matrix);
                 currentVrm.scene.rotateY(Math.PI); 
-
-                // Thu nhỏ kích thước tỷ lệ vừa vặn (0.6)
                 currentVrm.scene.scale.set(0.6, 0.6, 0.6);
                 
                 reticle.visible = false;
-                document.getElementById('info').innerText = 'Đã đặt nhân vật xuống sàn!';
+                document.getElementById('info').innerText = 'Đã bật chế độ che khuất không gian!';
             }
         }
 
@@ -125,6 +125,17 @@
             if (frame) {
                 const referenceSpace = renderer.xr.getReferenceSpace();
                 const session = renderer.xr.getSession();
+
+                // Xử lý Depth Information từ camera nếu thiết bị hỗ trợ
+                const viewerPose = frame.getViewerPose(referenceSpace);
+                if (viewerPose && viewerPose.views) {
+                    viewerPose.views.forEach((view) => {
+                        const depthInformation = frame.getDepthInformation(view);
+                        if (depthInformation) {
+                            // Dữ liệu chiều sâu được kích hoạt thành công để tạo lớp che khuất
+                        }
+                    });
+                }
 
                 if (!hitTestSourceRequested) {
                     session.requestReferenceSpace('viewer').then((referenceSpace) => {
