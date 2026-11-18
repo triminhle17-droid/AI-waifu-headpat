@@ -2,162 +2,115 @@
 <html lang="vi">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Web VRM Headpat - MediaPipe AR</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>WebAR VRM Floor Placement</title>
     <style>
-        body { margin: 0; overflow: hidden; background: #111; }
+        body { margin: 0; overflow: hidden; background: #000; font-family: sans-serif; }
         #info {
-            position: absolute; top: 15px; width: 100%; text-align: center;
-            color: white; font-family: sans-serif; font-size: 16px; pointer-events: none;
-            text-shadow: 1px 1px 2px black; z-index: 10;
+            position: absolute; top: 20px; width: 100%; text-align: center;
+            color: white; font-size: 16px; pointer-events: none;
+            text-shadow: 1px 1px 3px black; z-index: 10;
         }
-        /* Video ẩn dùng cho MediaPipe xử lý camera */
-        #webcam {
-            position: absolute; bottom: 10px; right: 10px;
-            width: 160px; height: 120px; border-radius: 8px;
-            border: 2px solid rgba(255,255,255,0.3);
-            transform: scaleX(-1); object-fit: cover;
-            z-index: 5; opacity: 0.8;
+        #ar-button {
+            position: absolute; bottom: 30px; left: 50%; transform: translateX(-50%);
+            padding: 12px 24px; background: #007aff; color: white; border: none;
+            border-radius: 25px; font-size: 18px; font-weight: bold; cursor: pointer;
+            box-shadow: 0 4px 10px rgba(0,0,0,0.4); z-index: 10;
         }
     </style>
 </head>
 <body>
-    <div id="info">Đang khởi động Camera và AI nhận diện tay...</div>
-    
-    <!-- Video hiển thị khung hình camera nhỏ ở góc phải -->
-    <video id="webcam" autoplay playsinline></video>
+    <div id="info">Nhấn nút bên dưới để khởi động AR</div>
+    <button id="ar-button">BẮT ĐẦU AR</button>
 
     <!-- Thư viện Three.js & VRM -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/GLTFLoader.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
     <script src="https://unpkg.com/@pixiv/three-vrm@0.6.8/lib/three-vrm.js"></script>
 
-    <!-- Thư viện MediaPipe Hands từ Google CDN -->
-    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
-    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
+    <script type="module">
+        import { ARButton } from 'https://unpkg.com/three@0.128.0/examples/jsm/webxr/ARButton.js';
 
-    <script>
-        let scene, camera, renderer, currentVrm;
-        const videoElement = document.getElementById('webcam');
-        let isHeadpatting = false;
+        let container;
+        let camera, scene, renderer;
+        let currentVrm = null;
+        let reticle;
+        let hitTestSource = null;
+        let hitTestSourceRequested = false;
+
+        let controller;
 
         init();
         animate();
 
         function init() {
-            // 1. Scene, Camera, Renderer 3D
+            container = document.createElement('div');
+            document.body.appendChild(container);
+
             scene = new THREE.Scene();
-            camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, 20);
-            camera.position.set(0, 1.4, 2.5);
+
+            camera = new THREE.PerspectiveCamera(70, window.innerWidth / window.innerHeight, 0.01, 20);
 
             renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
-            renderer.setSize(window.innerWidth, window.innerHeight);
             renderer.setPixelRatio(window.devicePixelRatio);
-            document.body.appendChild(renderer.domElement);
-
-            const controls = new THREE.OrbitControls(camera, renderer.domElement);
-            controls.target.set(0, 1.0, 0);
-            controls.update();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            renderer.xr.enabled = true; // Bật chế độ WebXR
+            container.appendChild(renderer.domElement);
 
             // Ánh sáng
             const light = new THREE.DirectionalLight(0xffffff, Math.PI);
-            light.position.set(1, 1, 1).normalize();
+            light.position.set(1, 2, 1).normalize();
             scene.add(light);
             scene.add(new THREE.AmbientLight(0xffffff, 0.8));
 
-            // 2. Tải model.vrm
+            // Tải file mô hình model.vrm trước
             const loader = new THREE.GLTFLoader();
-            loader.load(
-                'model.vrm',
-                (gltf) => {
-                    document.getElementById('info').innerText = 'Đang xử lý mô hình VRM...';
-                    THREE.VRM.from(gltf).then((vrm) => {
-                        scene.add(vrm.scene);
-                        currentVrm = vrm;
-                        vrm.scene.rotation.y = Math.PI; 
-                        document.getElementById('info').innerText = 'Hãy giơ tay lên camera và chạm vào đầu nhân vật!';
-                    }).catch((err) => {
-                        console.error("Lỗi VRM:", err);
-                        document.getElementById('info').innerText = 'Lỗi khởi tạo VRM!';
-                    });
-                },
-                (progress) => {
-                    if (progress.total > 0) {
-                        let percent = ((progress.loaded / progress.total) * 100).toFixed(0);
-                        document.getElementById('info').innerText = 'Đang tải model: ' + percent + '%';
-                    }
-                }
+            loader.load('model.vrm', (gltf) => {
+                THREE.VRM.from(gltf).then((vrm) => {
+                    currentVrm = vrm;
+                    // Chưa đưa vào scene vội, khi nào bấm màn hình mới đặt xuống vị trí vòng tròn AR
+                });
+            }, undefined, (error) => {
+                console.error('Lỗi tải VRM:', error);
+            });
+
+            // Tạo vòng tròn định vị mặt đất (Reticle) giống như trong video mẫu
+            reticle = new THREE.Mesh(
+                new THREE.RingGeometry(0.15, 0.2, 32).rotateX(- Math.PI / 2),
+                new THREE.MeshBasicMaterial({ color: 0xffffff })
             );
+            reticle.matrixAutoUpdate = false;
+            reticle.visible = false;
+            scene.add(reticle);
 
-            // 3. Khởi tạo MediaPipe Hands
-            setupMediaPipe();
+            // Thiết lập nút AR Button của WebXR
+            const arButtonOptions = {
+                requiredFeatures: ['hit-test'], // Yêu cầu tính năng quét mặt phẳng
+                optionalFeatures: ['dom-overlay'],
+                domOverlay: { root: document.body }
+            };
 
-            window.addEventListener('resize', onWindowResize);
+            document.body.appendChild(ARButton.createButton(renderer, arButtonOptions));
+
+            // Bắt sự kiện chạm màn hình điện thoại để đặt mô hình xuống sàn
+            controller = renderer.xr.getController(0);
+            controller.addEventListener('select', onSelect);
+            scene.add(controller);
+
+            window.addEventListener('resize', onWindowResize, false);
         }
 
-        function setupMediaPipe() {
-            const hands = new Hands({
-                locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`
-            });
-
-            hands.setOptions({
-                maxNumHands: 1, // Nhận diện tối đa 1 bàn tay
-                modelComplexity: 1,
-                minDetectionConfidence: 0.6,
-                minTrackingConfidence: 0.6
-            });
-
-            hands.onResults(onHandResults);
-
-            const cameraUtils = new Camera(videoElement, {
-                onFrame: async () => {
-                    await hands.send({ image: videoElement });
-                },
-                width: 320,
-                height: 240
-            });
-            cameraUtils.start();
-        }
-
-        // Xử lý tọa độ bàn tay trả về từ AI
-        function onHandResults(results) {
-            if (!currentVrm || !currentVrm.expressionManager) return;
-
-            if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
-                // Lấy tọa độ đầu ngón trỏ (Landmark số 8)
-                const indexFinger = results.multiHandLandmarks[0][8];
+        // Khi người dùng chạm màn hình điện thoại
+        function onSelect() {
+            if (reticle.visible && currentVrm) {
+                // Đưa mô hình vào vị trí vòng tròn đang quét được trên mặt đất
+                scene.add(currentVrm.scene);
+                currentVrm.scene.position.setFromMatrixPosition(reticle.matrix);
+                currentVrm.scene.quaternion.setFromRotationMatrix(reticle.matrix);
                 
-                // Tọa độ X, Y của ngón tay (dao động từ 0.0 đến 1.0)
-                // Lưu ý: Camera bị lật gương nên trục X cần đảo ngược (1 - indexFinger.x)
-                const fingerX = 1 - indexFinger.x; 
-                const fingerY = indexFinger.y;
-
-                // Vùng đầu của mô hình Hu Tao trên màn hình tương ứng khoảng:
-                // X từ 0.35 đến 0.65 (ở giữa màn hình)
-                // Y từ 0.15 đến 0.40 (nửa trên màn hình)
-                const isTouchingHead = (fingerX > 0.35 && fingerX < 0.65 && fingerY > 0.15 && fingerY < 0.40);
-
-                if (isTouchingHead && !isHeadpatting) {
-                    isHeadpatting = true;
-                    console.log("Đang xoa đầu qua Camera!");
-                    
-                    // Kích hoạt biểu cảm cười
-                    currentVrm.expressionManager.setValue('happy', 1.0);
-                    currentVrm.expressionManager.update();
-                } else if (!isTouchingHead && isHeadpatting) {
-                    isHeadpatting = false;
-                    // Trở về trạng thái bình thường
-                    currentVrm.expressionManager.setValue('happy', 0.0);
-                    currentVrm.expressionManager.update();
-                }
-            } else {
-                // Nếu không thấy tay, reset trạng thái
-                if (isHeadpatting) {
-                    isHeadpatting = false;
-                    currentVrm.expressionManager.setValue('happy', 0.0);
-                    currentVrm.expressionManager.update();
-                }
+                // Ẩn vòng tròn định vị đi sau khi đã đặt nhân vật xuống
+                reticle.visible = false;
+                document.getElementById('info').innerText = 'Đã đặt nhân vật xuống sàn!';
             }
         }
 
@@ -168,12 +121,30 @@
         }
 
         function animate() {
-            requestAnimationFrame(animate);
-            if (currentVrm) {
-                currentVrm.update(0.016);
-            }
-            renderer.render(scene, camera);
+            renderer.setAnimationLoop(render);
         }
-    </script>
-</body>
-</html>
+
+        function render(timestamp, frame) {
+            if (frame) {
+                const referenceSpace = renderer.xr.getReferenceSpace();
+                const session = renderer.xr.getSession();
+
+                if (!hitTestSourceRequested) {
+                    session.requestReferenceSpace('viewer').then((referenceSpace) => {
+                        session.requestHitTestSource({ space: referenceSpace }).then((source) => {
+                            hitTestSource = source;
+                        });
+                    });
+                    session.addEventListener('end', () => {
+                        hitTestSourceRequested = false;
+                        hitTestSource = null;
+                        reticle.visible = false;
+                    });
+                    hitTestSourceRequested = true;
+                }
+
+                if (hitTestSource) {
+                    const hitTestResults = frame.getHitTestResults(hitTestSource);
+                    if (hitTestResults.length > 0) {
+                        const hit = hitTestResults[0];
+                        reticle.visible = true;
