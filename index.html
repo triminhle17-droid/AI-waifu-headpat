@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no" />
-  <title>VRM Layer Behind Me</title>
+  <title>Front Cam VRM Behind Person</title>
   <style>
     html, body {
       margin: 0;
@@ -12,6 +12,7 @@
       height: 100%;
       overflow: hidden;
       background: #111;
+      font-family: sans-serif;
     }
     #stage {
       position: relative;
@@ -45,13 +46,13 @@
       background: rgba(0, 0, 0, 0.55);
       padding: 6px 14px;
       border-radius: 999px;
-      font-family: sans-serif;
       font-size: 13px;
+      white-space: nowrap;
     }
   </style>
 </head>
 <body>
-  <div id="status">Đang khởi động camera &amp; tách nền...</div>
+  <div id="status">Đang bật camera trước...</div>
   <div id="stage">
     <canvas id="vrm-canvas"></canvas>
     <canvas id="person-canvas"></canvas>
@@ -73,14 +74,10 @@
     const personCanvas = document.getElementById('person-canvas');
     const personCtx = personCanvas.getContext('2d');
 
-    // Canvas tạm để xử lý mask mượt hơn
-    const maskCanvas = document.createElement('canvas');
-    const maskCtx = maskCanvas.getContext('2d');
-
-    // 1. Khởi tạo Three.js cho mô hình nằm ở lớp sau
+    // 1. Three.js: mô hình nằm ở lớp sau (z-index: 1)
     const scene = new THREE.Scene();
     const camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, 50);
-    camera.position.set(0, 1.35, 2.4);
+    camera.position.set(0, 1.35, 1.8);
 
     const renderer = new THREE.WebGLRenderer({
       canvas: vrmCanvas,
@@ -90,7 +87,7 @@
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
     renderer.setSize(window.innerWidth, window.innerHeight);
 
-    const dirLight = new THREE.DirectionalLight(0xffffff, 1.1);
+    const dirLight = new THREE.DirectionalLight(0xffffff, 1.15);
     dirLight.position.set(1, 2, 2);
     scene.add(dirLight);
     scene.add(new THREE.AmbientLight(0xffffff, 0.85));
@@ -102,12 +99,12 @@
       (gltf) => {
         THREE.VRM.from(gltf).then((vrm) => {
           currentVrm = vrm;
-          // Đặt mô hình lùi về sau và hơi lệch sang một bên giống ảnh mẫu
-          vrm.scene.position.set(0.35, 0, -0.4);
-          vrm.scene.scale.set(0.9, 0.9, 0.9);
+          // Đặt gần vừa tầm để dễ đưa tay vào trước mặt/đầu nhân vật
+          vrm.scene.position.set(0.15, 0.15, 0.2);
+          vrm.scene.scale.set(0.95, 0.95, 0.95);
           vrm.scene.rotation.y = Math.PI;
           scene.add(vrm.scene);
-          statusEl.innerText = 'Layer: behind me (Sẵn sàng)';
+          statusEl.innerText = 'Cam trước sẵn sàng — đưa tay lên trước nhân vật';
         });
       },
       undefined,
@@ -117,14 +114,14 @@
       }
     );
 
-    // 2. Khởi tạo Selfie Segmentation
+    // 2. Selfie Segmentation: tách người/tay nằm ở lớp trên (z-index: 2)
     const selfieSegmentation = new SelfieSegmentation({
       locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/selfie_segmentation/${file}`
     });
 
     selfieSegmentation.setOptions({
-      modelSelection: 1, // 1 = landscape/general mượt hơn trên nhiều máy
-      selfieMode: true
+      modelSelection: 1,
+      selfieMode: false // Tự lật gương trên canvas để kiểm soát mượt và đúng chiều
     });
 
     selfieSegmentation.onResults((results) => {
@@ -132,39 +129,43 @@
       const h = personCanvas.height;
       if (!w || !h) return;
 
-      maskCanvas.width = w;
-      maskCanvas.height = h;
-
       personCtx.save();
       personCtx.clearRect(0, 0, w, h);
 
-      // Làm mềm viền nhẹ giống "Edges: soft"
+      // Lật ngang theo kiểu gương soi cho camera trước
+      personCtx.translate(w, 0);
+      personCtx.scale(-1, 1);
+
       personCtx.filter = 'blur(1.5px)';
       personCtx.drawImage(results.segmentationMask, 0, 0, w, h);
       personCtx.filter = 'none';
 
-      // Giữ lại phần người thật (nơi mask có màu trắng)
+      // Chỉ giữ phần người & tay thật đè lên mô hình VRM
       personCtx.globalCompositeOperation = 'source-in';
       personCtx.drawImage(results.image, 0, 0, w, h);
 
       personCtx.restore();
     });
 
-    // 3. Mở camera
-    async function startCamera() {
+    // 3. Mở camera trước (facingMode: 'user')
+    async function startFrontCamera() {
       try {
         const stream = await navigator.mediaDevices.getUserMedia({
-          video: { facingMode: 'user', width: { ideal: 1280 }, height: { ideal: 720 } },
+          video: {
+            facingMode: { ideal: 'user' },
+            width: { ideal: 1280 },
+            height: { ideal: 720 }
+          },
           audio: false
         });
         videoEl.srcObject = stream;
         await videoEl.play();
 
         resizeCanvases();
-        processLoop();
+        loop();
       } catch (err) {
         console.error(err);
-        statusEl.innerText = 'Không mở được camera (kiểm tra quyền & HTTPS)';
+        statusEl.innerText = 'Không mở được cam trước (kiểm tra quyền & HTTPS)';
       }
     }
 
@@ -180,7 +181,7 @@
 
     window.addEventListener('resize', resizeCanvases);
 
-    async function processLoop() {
+    async function loop() {
       if (videoEl.readyState >= 2) {
         await selfieSegmentation.send({ image: videoEl });
       }
@@ -188,10 +189,10 @@
         currentVrm.update(0.016);
       }
       renderer.render(scene, camera);
-      requestAnimationFrame(processLoop);
+      requestAnimationFrame(loop);
     }
 
-    startCamera();
+    startFrontCamera();
   </script>
 </body>
 </html>
