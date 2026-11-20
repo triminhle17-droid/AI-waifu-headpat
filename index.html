@@ -3,71 +3,142 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no" />
-  <title>VRM Layer Behind Person - Clean</title>
+  <title>TikTok Style VRM Filter</title>
   <style>
+    * { box-sizing: border-box; }
     html, body {
       margin: 0;
       padding: 0;
       width: 100%;
       height: 100%;
       overflow: hidden;
-      background: transparent;
+      background: #0b0b0f;
       font-family: sans-serif;
+      display: flex;
+      align-items: center;
+      justify-content: center;
     }
-    #stage {
+
+    /* Khung filter kiểu TikTok */
+    #filter-frame {
       position: relative;
       width: 100vw;
       height: 100vh;
+      max-width: 480px;
+      aspect-ratio: 9 / 16;
+      max-height: 100vh;
+      overflow: hidden;
+      background: #000;
+      box-shadow: 0 12px 40px rgba(0, 0, 0, 0.7);
     }
-    #bg-canvas, #vrm-canvas, #person-canvas {
+
+    @media (min-width: 600px) {
+      #filter-frame {
+        height: 92vh;
+        border-radius: 22px;
+        border: 1px solid rgba(255, 255, 255, 0.12);
+      }
+    }
+
+    #cam-canvas, #vrm-canvas, #person-canvas {
       position: absolute;
       inset: 0;
       width: 100%;
       height: 100%;
       pointer-events: none;
     }
-    #bg-canvas { z-index: 1; }
+    #cam-canvas { z-index: 1; }
     #vrm-canvas { z-index: 2; }
     #person-canvas { z-index: 3; }
 
     #video { display: none; }
 
+    /* Thanh trạng thái trên cùng */
+    #top-bar {
+      position: absolute;
+      top: 14px;
+      left: 12px;
+      right: 12px;
+      z-index: 10;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .badge {
+      color: #fff;
+      background: rgba(0, 0, 0, 0.55);
+      backdrop-filter: blur(6px);
+      padding: 6px 12px;
+      border-radius: 999px;
+      font-size: 12px;
+    }
+
+    /* Cụm nút điều khiển kiểu TikTok bên phải / dưới */
     #controls {
-      position: fixed;
-      top: 12px;
+      position: absolute;
+      right: 12px;
+      bottom: 84px;
+      z-index: 10;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+
+    .btn {
+      border: none;
+      color: #fff;
+      background: rgba(20, 20, 28, 0.72);
+      backdrop-filter: blur(6px);
+      padding: 9px 12px;
+      border-radius: 14px;
+      font-size: 12px;
+      font-weight: 600;
+      cursor: pointer;
+      border: 1px solid rgba(255, 255, 255, 0.14);
+      text-align: center;
+    }
+
+    .btn.active {
+      background: #ff2b55;
+      border-color: #ff2b55;
+    }
+
+    #bottom-bar {
+      position: absolute;
+      bottom: 18px;
       left: 50%;
       transform: translateX(-50%);
       z-index: 10;
       display: flex;
       gap: 8px;
-      align-items: center;
-    }
-    .pill {
-      color: #fff;
-      background: rgba(0, 0, 0, 0.6);
-      padding: 6px 12px;
-      border-radius: 999px;
-      font-size: 12px;
-      border: none;
-    }
-    button.pill {
-      cursor: pointer;
-      background: rgba(0, 122, 255, 0.85);
     }
   </style>
 </head>
 <body>
-  <div id="controls">
-    <span id="status" class="pill">Đang khởi động...</span>
-    <button id="toggle-bg" class="pill">Nền: Camera</button>
-  </div>
+  <div id="filter-frame">
+    <div id="top-bar">
+      <span id="status" class="badge">Đang bật camera...</span>
+      <span class="badge">VRM Center Filter</span>
+    </div>
 
-  <div id="stage">
-    <canvas id="bg-canvas"></canvas>
+    <canvas id="cam-canvas"></canvas>
     <canvas id="vrm-canvas"></canvas>
     <canvas id="person-canvas"></canvas>
+    <video id="video" playsinline autoplay muted></video>
+
+    <div id="controls">
+      <button id="btn-cam" class="btn">Đổi Cam (Sau)</button>
+      <button id="btn-occ" class="btn active">Che người: BẬT</button>
+      <button id="btn-pos" class="btn">Vị trí: Giữa</button>
+    </div>
+
+    <div id="bottom-bar">
+      <button id="btn-zoom-out" class="btn">Thu nhỏ (-)</button>
+      <button id="btn-zoom-in" class="btn">Phóng to (+)</button>
+    </div>
   </div>
-  <video id="video" playsinline autoplay muted></video>
 
   <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/GLTFLoader.js"></script>
@@ -75,80 +146,97 @@
   <script src="https://cdn.jsdelivr.net/npm/@mediapipe/selfie_segmentation/selfie_segmentation.js"></script>
 
   <script>
+    const frameEl = document.getElementById('filter-frame');
     const statusEl = document.getElementById('status');
-    const toggleBgBtn = document.getElementById('toggle-bg');
     const videoEl = document.getElementById('video');
-    const bgCanvas = document.getElementById('bg-canvas');
-    const bgCtx = bgCanvas.getContext('2d');
+    const camCanvas = document.getElementById('cam-canvas');
+    const camCtx = camCanvas.getContext('2d');
     const vrmCanvas = document.getElementById('vrm-canvas');
     const personCanvas = document.getElementById('person-canvas');
     const personCtx = personCanvas.getContext('2d');
 
-    // Canvas phụ để xử lý mask sắc nét hơn trước khi áp lên người
     const maskCanvas = document.createElement('canvas');
     const maskCtx = maskCanvas.getContext('2d');
 
-    let showCameraBg = true; // true: hiện nền camera, false: nền trong suốt
+    const btnCam = document.getElementById('btn-cam');
+    const btnOcc = document.getElementById('btn-occ');
+    const btnPos = document.getElementById('btn-pos');
+    const btnZoomOut = document.getElementById('btn-zoom-out');
+    const btnZoomIn = document.getElementById('btn-zoom-in');
+
+    let facingMode = 'environment'; // 'environment' (cam sau) | 'user' (cam trước)
+    let occlusionEnabled = true;
     let isSegmenting = false;
+    let currentVrm = null;
 
-    toggleBgBtn.addEventListener('click', () => {
-      showCameraBg = !showCameraBg;
-      toggleBgBtn.innerText = showCameraBg ? 'Nền: Camera' : 'Nền: Trong suốt';
-      if (!showCameraBg) {
-        bgCtx.clearRect(0, 0, bgCanvas.width, bgCanvas.height);
-      }
-    });
+    // Các preset vị trí kiểu TikTok filter
+    const presets = [
+      { label: 'Giữa', x: 0.0, y: 0.08, z: 0.15 },
+      { label: 'Sau phải', x: 0.28, y: 0.12, z: -0.2 },
+      { label: 'Sau trái', x: -0.28, y: 0.12, z: -0.2 }
+    ];
+    let presetIdx = 0;
+    let modelScale = 0.85;
 
-    // Vẽ ảnh/video/mask theo kiểu object-fit: cover để không bị méo/lệch
-    function drawCover(ctx, source, targetW, targetH) {
-      const sw = source.videoWidth || source.width;
-      const sh = source.videoHeight || source.height;
-      if (!sw || !sh || !targetW || !targetH) return;
-
-      const scale = Math.max(targetW / sw, targetH / sh);
-      const dw = sw * scale;
-      const dh = sh * scale;
-      const dx = (targetW - dw) * 0.5;
-      const dy = (targetH - dh) * 0.5;
-      ctx.drawImage(source, dx, dy, dw, dh);
+    function applyModelTransform() {
+      if (!currentVrm) return;
+      const p = presets[presetIdx];
+      currentVrm.scene.position.set(p.x, p.y, p.z);
+      currentVrm.scene.scale.set(modelScale, modelScale, modelScale);
     }
 
-    // 1. Three.js (lớp giữa: nằm trên nền camera, dưới người/tay)
+    function drawCover(ctx, source, w, h, mirror = false) {
+      const sw = source.videoWidth || source.width;
+      const sh = source.videoHeight || source.height;
+      if (!sw || !sh || !w || !h) return;
+
+      const scale = Math.max(w / sw, h / sh);
+      const dw = sw * scale;
+      const dh = sh * scale;
+      const dx = (w - dw) * 0.5;
+      const dy = (h - dh) * 0.5;
+
+      ctx.save();
+      if (mirror) {
+        ctx.translate(w, 0);
+        ctx.scale(-1, 1);
+      }
+      ctx.drawImage(source, dx, dy, dw, dh);
+      ctx.restore();
+    }
+
+    // 1. Three.js VRM
     const scene = new THREE.Scene();
-    const camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, 50);
-    camera.position.set(0, 1.35, 1.8);
+    const camera = new THREE.PerspectiveCamera(45, 9 / 16, 0.1, 50);
+    camera.position.set(0, 1.35, 1.9);
 
     const renderer = new THREE.WebGLRenderer({
       canvas: vrmCanvas,
       antialias: true,
       alpha: true
     });
-    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
-    renderer.setSize(window.innerWidth, window.innerHeight);
 
     const dirLight = new THREE.DirectionalLight(0xffffff, 1.15);
     dirLight.position.set(1, 2, 2);
     scene.add(dirLight);
     scene.add(new THREE.AmbientLight(0xffffff, 0.85));
 
-    let currentVrm = null;
     new THREE.GLTFLoader().load(
       'model.vrm',
       (gltf) => {
         THREE.VRM.from(gltf).then((vrm) => {
           currentVrm = vrm;
-          vrm.scene.position.set(0.15, 0.15, 0.2);
-          vrm.scene.scale.set(0.95, 0.95, 0.95);
           vrm.scene.rotation.y = Math.PI;
+          applyModelTransform();
           scene.add(vrm.scene);
-          statusEl.innerText = 'Sẵn sàng';
+          statusEl.innerText = 'Filter sẵn sàng';
         });
       },
       undefined,
       () => { statusEl.innerText = 'Lỗi tải model.vrm'; }
     );
 
-    // 2. Selfie Segmentation (lớp trên cùng: tay & người đè lên nhân vật)
+    // 2. Selfie Segmentation
     const selfieSegmentation = new SelfieSegmentation({
       locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/selfie_segmentation/${file}`
     });
@@ -161,43 +249,45 @@
     selfieSegmentation.onResults((results) => {
       const w = personCanvas.width;
       const h = personCanvas.height;
-      if (!w || !h) return;
+      if (!w || !h || !occlusionEnabled) return;
 
+      const isMirror = facingMode === 'user';
       maskCanvas.width = w;
       maskCanvas.height = h;
       maskCtx.clearRect(0, 0, w, h);
 
-      // Làm mượt nhẹ mask nhưng giữ độ nét để giảm bóng mờ viền
-      maskCtx.filter = 'blur(2px)';
-      drawCover(maskCtx, results.segmentationMask, w, h);
+      maskCtx.filter = 'blur(1.5px)';
+      drawCover(maskCtx, results.segmentationMask, w, h, isMirror);
       maskCtx.filter = 'none';
 
-      // Tăng độ tương phản mask để cắt bớt vùng bán trong suốt bị nhòe
+      // Cắt viền sạch hơn để giảm bóng mờ
       const imgData = maskCtx.getImageData(0, 0, w, h);
       const data = imgData.data;
       for (let i = 3; i < data.length; i += 4) {
-        // Ngưỡng cắt: < 90 bỏ hẳn (xóa vệt mờ), > 180 rõ hẳn
         const a = data[i];
-        if (a < 90) data[i] = 0;
-        else if (a > 180) data[i] = 255;
-        else data[i] = Math.round(((a - 90) / 90) * 255);
+        if (a < 105) data[i] = 0;
+        else if (a > 190) data[i] = 255;
+        else data[i] = Math.round(((a - 105) / 85) * 255);
       }
       maskCtx.putImageData(imgData, 0, 0);
 
       personCtx.clearRect(0, 0, w, h);
       personCtx.save();
-      drawCover(personCtx, results.image, w, h);
+      drawCover(personCtx, results.image, w, h, isMirror);
       personCtx.globalCompositeOperation = 'destination-in';
       personCtx.drawImage(maskCanvas, 0, 0);
       personCtx.restore();
     });
 
-    // 3. Mở camera sau
+    // 3. Camera
     async function startCamera() {
+      if (videoEl.srcObject) {
+        videoEl.srcObject.getTracks().forEach((t) => t.stop());
+      }
       try {
         const stream = await navigator.mediaDevices.getUserMedia({
           video: {
-            facingMode: { ideal: 'environment' },
+            facingMode: { ideal: facingMode },
             width: { ideal: 1280 },
             height: { ideal: 720 }
           },
@@ -205,36 +295,71 @@
         });
         videoEl.srcObject = stream;
         await videoEl.play();
-        resizeAll();
-        loop();
+        resizeFrame();
+        statusEl.innerText = facingMode === 'environment' ? 'Cam sau đang chạy' : 'Cam trước đang chạy';
       } catch (err) {
         console.error(err);
-        statusEl.innerText = 'Không mở được camera (kiểm tra quyền & HTTPS)';
+        statusEl.innerText = 'Lỗi mở camera (kiểm tra HTTPS & quyền)';
       }
     }
 
-    function resizeAll() {
-      const w = window.innerWidth;
-      const h = window.innerHeight;
-      bgCanvas.width = w;
-      bgCanvas.height = h;
+    function resizeFrame() {
+      const rect = frameEl.getBoundingClientRect();
+      const w = Math.max(1, Math.floor(rect.width));
+      const h = Math.max(1, Math.floor(rect.height));
+
+      camCanvas.width = w;
+      camCanvas.height = h;
       personCanvas.width = w;
       personCanvas.height = h;
+
       camera.aspect = w / h;
       camera.updateProjectionMatrix();
+      renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
       renderer.setSize(w, h);
     }
 
-    window.addEventListener('resize', resizeAll);
+    window.addEventListener('resize', resizeFrame);
+
+    // Các nút tương tác
+    btnCam.addEventListener('click', () => {
+      facingMode = facingMode === 'environment' ? 'user' : 'environment';
+      btnCam.innerText = facingMode === 'environment' ? 'Đổi Cam (Sau)' : 'Đổi Cam (Trước)';
+      startCamera();
+    });
+
+    btnOcc.addEventListener('click', () => {
+      occlusionEnabled = !occlusionEnabled;
+      btnOcc.classList.toggle('active', occlusionEnabled);
+      btnOcc.innerText = occlusionEnabled ? 'Che người: BẬT' : 'Che người: TẮT';
+      if (!occlusionEnabled) {
+        personCtx.clearRect(0, 0, personCanvas.width, personCanvas.height);
+      }
+    });
+
+    btnPos.addEventListener('click', () => {
+      presetIdx = (presetIdx + 1) % presets.length;
+      btnPos.innerText = `Vị trí: ${presets[presetIdx].label}`;
+      applyModelTransform();
+    });
+
+    btnZoomIn.addEventListener('click', () => {
+      modelScale = Math.min(1.8, +(modelScale + 0.1).toFixed(2));
+      applyModelTransform();
+    });
+
+    btnZoomOut.addEventListener('click', () => {
+      modelScale = Math.max(0.35, +(modelScale - 0.1).toFixed(2));
+      applyModelTransform();
+    });
 
     async function loop() {
       if (videoEl.readyState >= 2) {
-        if (showCameraBg) {
-          bgCtx.clearRect(0, 0, bgCanvas.width, bgCanvas.height);
-          drawCover(bgCtx, videoEl, bgCanvas.width, bgCanvas.height);
-        }
+        const isMirror = facingMode === 'user';
+        camCtx.clearRect(0, 0, camCanvas.width, camCanvas.height);
+        drawCover(camCtx, videoEl, camCanvas.width, camCanvas.height, isMirror);
 
-        if (!isSegmenting) {
+        if (occlusionEnabled && !isSegmenting) {
           isSegmenting = true;
           try {
             await selfieSegmentation.send({ image: videoEl });
@@ -251,7 +376,9 @@
       requestAnimationFrame(loop);
     }
 
+    resizeFrame();
     startCamera();
+    loop();
   </script>
 </body>
 </html>
