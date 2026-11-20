@@ -28,7 +28,7 @@
   <div id="filter-frame">
     <div id="top-bar">
       <span id="status" class="badge">Khởi tạo...</span>
-      <span class="badge">RVM + VRM Filter v5</span>
+      <span class="badge">RVM + VRM Filter v6</span>
     </div>
 
     <canvas id="cam-canvas"></canvas>
@@ -61,8 +61,9 @@
     // ===== CẤU HÌNH =====
     const RVM_MODEL_URL = './rvm_mobilenetv3_fp32.onnx';
     const RVM_EXTERNAL_DATA_URL = RVM_MODEL_URL + '.data'; // chỉ dùng nếu model có file .data đi kèm
-    const RVM_W = 180, RVM_H = 320;  // đúng tỉ lệ 9:16. Nhỏ hơn = nhanh hơn (thử 216x384 nếu muốn nét hơn)
-    const RVM_RATIO = 0.6;           // giảm xuống 0.5 nếu vẫn chậm, tăng lên nếu viền người bị răng cưa
+    const RVM_W = 216, RVM_H = 384;  // đúng tỉ lệ 9:16. Nét hơn: 270x480. Nhanh hơn: 180x320
+    const RVM_RATIO = 0.5;           // giảm nếu chậm, tăng nếu viền răng cưa
+    const ALPHA_LO = 0.25, ALPHA_HI = 0.65; // thu hẹp khoảng này = viền gắt hơn, ít bị mờ/ma
     const RVM_USE_WORKER = true;     // chạy ONNX trong worker; đổi thành false nếu báo 'Run lỗi'
     const ARM_SIGN = 1;              // đổi thành -1 nếu tay quay ngược chiều
 
@@ -106,6 +107,7 @@
     let rvmReady = false;
     let rvmStatusText = 'Đang nạp RVM...';
     let rvmFullMsg = '';
+    let maskFps = 0, fpsCount = 0, fpsT = performance.now();
 
     const emptyState = () => new ort.Tensor('float32', new Float32Array(1), [1, 1, 1, 1]);
     let recStates = { r1i: emptyState(), r2i: emptyState(), r3i: emptyState(), r4i: emptyState() };
@@ -117,7 +119,7 @@
 
     function updateStatus() {
       const camLabel = facingMode === 'environment' ? 'Cam sau' : 'Cam trước';
-      statusEl.innerText = `${camLabel} • ${rvmStatusText}`;
+      statusEl.innerText = `${camLabel} • ${rvmStatusText}${rvmReady && maskFps ? ' • ' + maskFps + ' fps' : ''}`;
     }
     // Chạm vào thanh trạng thái để xem lỗi đầy đủ
     statusEl.addEventListener('click', () => { if (rvmFullMsg) alert(rvmFullMsg); });
@@ -361,8 +363,8 @@
       const out = matteImgData.data;
       const total = RVM_W * RVM_H;
       for (let i = 0; i < total; i++) {
-        let a = alphaData[i] || 0;
-        if (a < 0.03) a = 0; else if (a > 0.7) a = 1;
+        let a = ((alphaData[i] || 0) - ALPHA_LO) / (ALPHA_HI - ALPHA_LO);
+        a = a <= 0 ? 0 : a >= 1 ? 1 : a * a * (3 - 2 * a);
         const idx = i * 4;
         out[idx] = 255; out[idx + 1] = 255; out[idx + 2] = 255;
         out[idx + 3] = Math.round(a * 255);
@@ -379,6 +381,13 @@
         if (ready) {
           try {
             await runRVMSegmentation(facingMode === 'user');
+            fpsCount++;
+            const tNow = performance.now();
+            if (tNow - fpsT >= 1000) {
+              maskFps = Math.round((fpsCount * 1000) / (tNow - fpsT));
+              fpsCount = 0; fpsT = tNow;
+              updateStatus();
+            }
           } catch (e) {
             console.warn('RVM frame error:', e);
             const msg = ((e && e.name) ? e.name + ': ' : '') + String((e && e.message) || e);
@@ -499,8 +508,9 @@
       const rect = frameEl.getBoundingClientRect();
       const w = Math.max(1, Math.floor(rect.width));
       const h = Math.max(1, Math.floor(rect.height));
-      camCanvas.width = w; camCanvas.height = h;
-      personCanvas.width = w; personCanvas.height = h;
+      const k = Math.min(window.devicePixelRatio || 1, 1.5);
+      camCanvas.width = Math.round(w * k); camCanvas.height = Math.round(h * k);
+      personCanvas.width = camCanvas.width; personCanvas.height = camCanvas.height;
       camera.aspect = w / h;
       camera.updateProjectionMatrix();
       renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.5));
