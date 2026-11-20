@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no" />
-  <title>TikTok Style VRM Filter - RVM Debug</title>
+  <title>TikTok Style VRM Filter - RVM</title>
   <style>
     * { box-sizing: border-box; }
     html, body {
@@ -68,7 +68,7 @@
 
     .badge {
       color: #fff;
-      background: rgba(0, 0, 0, 0.65);
+      background: rgba(0, 0, 0, 0.68);
       backdrop-filter: blur(6px);
       padding: 6px 12px;
       border-radius: 999px;
@@ -125,14 +125,14 @@
 <body>
   <div id="filter-frame">
     <div id="top-bar">
-      <span id="status" class="badge">Đang nạp RVM...</span>
+      <span id="status" class="badge">Khởi tạo...</span>
       <span class="badge">RVM + VRM Filter</span>
     </div>
 
     <canvas id="cam-canvas"></canvas>
     <canvas id="vrm-canvas"></canvas>
     <canvas id="person-canvas"></canvas>
-    <video id="video" playsinline autoplay muted></video>
+    <video id="video" playsinline webkit-playsinline autoplay muted></video>
 
     <div id="controls">
       <button id="btn-cam" class="btn">Cam: Sau</button>
@@ -203,6 +203,7 @@
 
     let rvmSession = null;
     let rvmReady = false;
+    let rvmStatusText = 'Đang nạp RVM...';
     let recStates = {
       r1i: new ort.Tensor('float32', new Float32Array(1), [1, 1, 1, 1]),
       r2i: new ort.Tensor('float32', new Float32Array(1), [1, 1, 1, 1]),
@@ -210,6 +211,11 @@
       r4i: new ort.Tensor('float32', new Float32Array(1), [1, 1, 1, 1])
     };
     const downsampleRatioTensor = new ort.Tensor('float32', new Float32Array([0.375]), [1]);
+
+    function updateStatus() {
+      const camLabel = facingMode === 'environment' ? 'Cam sau' : 'Cam trước';
+      statusEl.innerText = `${camLabel} • ${rvmStatusText}`;
+    }
 
     function resetRecurrentStates() {
       recStates = {
@@ -319,18 +325,20 @@
     }
 
     async function initRVM() {
+      rvmStatusText = 'Đang nạp RVM...';
+      updateStatus();
       try {
-        statusEl.innerText = 'Đang nạp RVM...';
         ort.env.wasm.numThreads = 1;
         rvmSession = await ort.InferenceSession.create(RVM_MODEL_URL, {
           executionProviders: ['wasm', 'webgl']
         });
         rvmReady = true;
-        statusEl.innerText = 'RVM OK';
+        rvmStatusText = 'RVM OK';
       } catch (err) {
-        console.error('Lỗi tải RVM model:', err);
-        statusEl.innerText = 'Lỗi RVM: ' + (err && err.message ? err.message.slice(0, 45) : 'unknown');
+        rvmReady = false;
+        rvmStatusText = 'RVM lỗi: ' + (err && err.message ? err.message.slice(0, 32) : 'tải thất bại');
       }
+      updateStatus();
     }
 
     function canvasToNCHWTensor(ctx, w, h) {
@@ -381,7 +389,8 @@
       try {
         results = await rvmSession.run(feeds);
       } catch (err) {
-        statusEl.innerText = 'Lỗi run: ' + (err && err.message ? err.message.slice(0, 40) : 'fail');
+        rvmStatusText = 'Run lỗi: ' + (err && err.message ? err.message.slice(0, 30) : 'fail');
+        updateStatus();
         return;
       }
 
@@ -391,10 +400,7 @@
       if (results.r4o) recStates.r4i = results.r4o;
 
       const alphaTensor = pickAlphaTensor(results);
-      if (!alphaTensor || !alphaTensor.data) {
-        statusEl.innerText = 'Không thấy output alpha RVM';
-        return;
-      }
+      if (!alphaTensor || !alphaTensor.data) return;
 
       const alphaData = alphaTensor.data;
       const outPixels = matteImgData.data;
@@ -467,7 +473,10 @@
         });
       },
       undefined,
-      () => { statusEl.innerText = 'Lỗi tải model.vrm'; }
+      () => {
+        rvmStatusText = 'Lỗi model.vrm';
+        updateStatus();
+      }
     );
 
     let isDragging = false;
@@ -504,38 +513,22 @@
       if (isSwitchingCam) return;
       isSwitchingCam = true;
       resetRecurrentStates();
-      statusEl.innerText = facingMode === 'environment' ? 'Đang mở cam sau...' : 'Đang mở cam trước...';
+      updateStatus();
 
       if (videoEl.srcObject) {
         videoEl.srcObject.getTracks().forEach((track) => track.stop());
         videoEl.srcObject = null;
       }
 
-      await new Promise((r) => setTimeout(r, 250));
-
       const constraintsList =
         facingMode === 'environment'
           ? [
-              {
-                video: {
-                  facingMode: { exact: 'environment' },
-                  width: { ideal: 1280 },
-                  height: { ideal: 720 }
-                },
-                audio: false
-              },
+              { video: { facingMode: { ideal: 'environment' }, width: { ideal: 1280 }, height: { ideal: 720 } }, audio: false },
               { video: { facingMode: 'environment' }, audio: false },
               { video: true, audio: false }
             ]
           : [
-              {
-                video: {
-                  facingMode: 'user',
-                  width: { ideal: 1280 },
-                  height: { ideal: 720 }
-                },
-                audio: false
-              },
+              { video: { facingMode: { ideal: 'user' }, width: { ideal: 1280 }, height: { ideal: 720 } }, audio: false },
               { video: { facingMode: 'user' }, audio: false }
             ];
 
@@ -544,33 +537,25 @@
         try {
           const stream = await navigator.mediaDevices.getUserMedia(constraints);
           videoEl.srcObject = stream;
-          await videoEl.play();
-
-          await new Promise((resolve) => {
-            if (videoEl.videoWidth > 0 && videoEl.videoHeight > 0) return resolve();
-            videoEl.onloadedmetadata = () => resolve();
-            setTimeout(resolve, 500);
-          });
-
-          resizeFrame();
-          if (rvmReady) {
-            statusEl.innerText =
-              facingMode === 'environment'
-                ? `RVM OK • Cam sau (${videoEl.videoWidth}x${videoEl.videoHeight})`
-                : `RVM OK • Cam trước (${videoEl.videoWidth}x${videoEl.videoHeight})`;
+          try {
+            await videoEl.play();
+          } catch (_) {
+            // Safari đôi khi phát tự động qua autoplay + muted
           }
+          resizeFrame();
           opened = true;
           break;
         } catch (err) {
-          console.warn('Thử constraint thất bại:', constraints, err);
+          console.warn('Thử camera thất bại:', err);
         }
       }
 
       if (!opened) {
-        statusEl.innerText = 'Không mở được camera (kiểm tra quyền & HTTPS)';
+        rvmStatusText = 'Không mở được cam';
       }
 
       isSwitchingCam = false;
+      updateStatus();
     }
 
     function resizeFrame() {
@@ -690,7 +675,8 @@
     }
 
     resizeFrame();
-    initRVM().then(startCamera);
+    startCamera();
+    initRVM();
     loop();
   </script>
 </body>
