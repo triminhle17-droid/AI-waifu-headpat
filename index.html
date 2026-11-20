@@ -17,7 +17,7 @@
     #video { display: none; }
     #top-bar { position: absolute; top: 12px; left: 12px; right: 12px; z-index: 10; display: flex; justify-content: space-between; align-items: center; gap: 8px; pointer-events: none; }
     .badge { color: #fff; background: rgba(0,0,0,.68); padding: 6px 12px; border-radius: 999px; font-size: 12px; max-width: 72%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-    #status { pointer-events: auto; }
+    #status { pointer-events: auto; white-space: normal; line-height: 1.35; border-radius: 16px; }
     #controls { position: absolute; right: 10px; bottom: 96px; z-index: 10; display: flex; flex-direction: column; gap: 8px; }
     .btn { color: #fff; background: rgba(20,20,28,.75); padding: 8px 11px; border-radius: 13px; font-size: 11.5px; font-weight: 600; cursor: pointer; border: 1px solid rgba(255,255,255,.15); text-align: center; white-space: nowrap; }
     .btn.active { background: #ff2b55; border-color: #ff2b55; }
@@ -28,7 +28,7 @@
   <div id="filter-frame">
     <div id="top-bar">
       <span id="status" class="badge">Khởi tạo...</span>
-      <span class="badge">RVM + VRM Filter v6</span>
+      <span class="badge">RVM + VRM Filter v7</span>
     </div>
 
     <canvas id="cam-canvas"></canvas>
@@ -61,8 +61,12 @@
     // ===== CẤU HÌNH =====
     const RVM_MODEL_URL = './rvm_mobilenetv3_fp32.onnx';
     const RVM_EXTERNAL_DATA_URL = RVM_MODEL_URL + '.data'; // chỉ dùng nếu model có file .data đi kèm
-    const RVM_W = 216, RVM_H = 384;  // đúng tỉ lệ 9:16. Nét hơn: 270x480. Nhanh hơn: 180x320
-    const RVM_RATIO = 0.5;           // giảm nếu chậm, tăng nếu viền răng cưa
+    // Các mức chất lượng [rộng, cao, ratio], luôn 9:16. Trang tự hạ/tăng mức theo tốc độ máy.
+    const RVM_TIERS = [[108, 192, 0.8], [144, 256, 0.6], [180, 320, 0.5], [216, 384, 0.5], [270, 480, 0.4]];
+    const AUTO_TIER = true;          // đổi false để cố định mức
+    const RENDER_FPS_CAP = 30;       // giới hạn FPS vẽ để nhường CPU cho nhận diện
+    let tier = 2;
+    let RVM_W = RVM_TIERS[tier][0], RVM_H = RVM_TIERS[tier][1], RVM_RATIO = RVM_TIERS[tier][2];
     const ALPHA_LO = 0.25, ALPHA_HI = 0.65; // thu hẹp khoảng này = viền gắt hơn, ít bị mờ/ma
     const RVM_USE_WORKER = true;     // chạy ONNX trong worker; đổi thành false nếu báo 'Run lỗi'
     const ARM_SIGN = 1;              // đổi thành -1 nếu tay quay ngược chiều
@@ -83,7 +87,7 @@
     }
     const [rvmInputCanvas, rvmInputCtx] = makeCanvas(RVM_W, RVM_H, { willReadFrequently: true });
     const [matteCanvas, matteCtx] = makeCanvas(RVM_W, RVM_H);
-    const matteImgData = matteCtx.createImageData(RVM_W, RVM_H);
+    let matteImgData = matteCtx.createImageData(RVM_W, RVM_H);
 
     const btnCam = document.getElementById('btn-cam');
     const btnOcc = document.getElementById('btn-occ');
@@ -107,7 +111,8 @@
     let rvmReady = false;
     let rvmStatusText = 'Đang nạp RVM...';
     let rvmFullMsg = '';
-    let maskFps = 0, fpsCount = 0, fpsT = performance.now();
+    let maskFps = 0, fpsCount = 0, fpsT = performance.now(), uiFps = 0, uiCount = 0;
+    let aiMs = 0, iterTimes = [], tierCooldown = 3, tierCeil = RVM_TIERS.length - 1;
 
     const emptyState = () => new ort.Tensor('float32', new Float32Array(1), [1, 1, 1, 1]);
     let recStates = { r1i: emptyState(), r2i: emptyState(), r3i: emptyState(), r4i: emptyState() };
@@ -119,7 +124,7 @@
 
     function updateStatus() {
       const camLabel = facingMode === 'environment' ? 'Cam sau' : 'Cam trước';
-      statusEl.innerText = `${camLabel} • ${rvmStatusText}${rvmReady && maskFps ? ' • ' + maskFps + ' fps' : ''}`;
+      statusEl.innerText = `${camLabel} • ${rvmStatusText}${rvmReady && maskFps ? ` • mặt nạ ${maskFps}fps • AI ${aiMs}ms • ${RVM_H}p • UI ${uiFps}fps` : ''}`;
     }
     // Chạm vào thanh trạng thái để xem lỗi đầy đủ
     statusEl.addEventListener('click', () => { if (rvmFullMsg) alert(rvmFullMsg); });
@@ -287,6 +292,7 @@
           } else if (m.type === 'reset') {
             resetRec();
           } else if (m.type === 'run') {
+            const t0 = performance.now();
             const out = await session.run({
               src: new ort.Tensor('float32', m.src, [1, 3, m.h, m.w]),
               r1i: rec.r1i, r2i: rec.r2i, r3i: rec.r3i, r4i: rec.r4i,
@@ -294,7 +300,7 @@
             });
             rec = { r1i: out.r1o, r2i: out.r2o, r3i: out.r3o, r4i: out.r4o };
             const pha = Float32Array.from(out.pha.data);
-            self.postMessage({ type: 'result', pha }, [pha.buffer]);
+            self.postMessage({ type: 'result', pha, ms: performance.now() - t0 }, [pha.buffer]);
           }
         } catch (err) {
           self.postMessage({ type: 'error', message: String((err && err.message) || err) });
@@ -307,7 +313,7 @@
       const m = e.data;
       const res = runResolve, rej = runReject;
       runResolve = runReject = null;
-      if (m.type === 'result' && res) res(m.pha);
+      if (m.type === 'result' && res) { aiMs = Math.round(m.ms); res(m.pha); }
       else if (m.type === 'error' && rej) rej(new Error(m.message));
     }
 
@@ -331,12 +337,14 @@
           rvmWorker.postMessage({ type: 'run', src: srcData, w: RVM_W, h: RVM_H, ratio: RVM_RATIO }, [srcData.buffer]);
         });
       }
+      const t0 = performance.now();
       const results = await rvmSession.run({
         src: new ort.Tensor('float32', srcData, [1, 3, RVM_H, RVM_W]),
         r1i: recStates.r1i, r2i: recStates.r2i, r3i: recStates.r3i, r4i: recStates.r4i,
         downsample_ratio: new ort.Tensor('float32', new Float32Array([RVM_RATIO]), [1])
       });
       recStates = { r1i: results.r1o, r2i: results.r2o, r3i: results.r3o, r4i: results.r4o };
+      aiMs = Math.round(performance.now() - t0);
       return results.pha.data;
     }
 
@@ -374,20 +382,34 @@
       matteFresh = true;
     }
 
+    function setTier(i) {
+      tier = i;
+      [RVM_W, RVM_H, RVM_RATIO] = RVM_TIERS[i];
+      rvmInputCanvas.width = matteCanvas.width = RVM_W;
+      rvmInputCanvas.height = matteCanvas.height = RVM_H;
+      matteImgData = matteCtx.createImageData(RVM_W, RVM_H);
+      resetRecurrentStates();
+      iterTimes = []; tierCooldown = 3;
+    }
+
     // Vòng matting chạy riêng, không làm chậm vòng render
     async function matteLoop() {
       while (true) {
         const ready = occlusionEnabled && rvmReady && !isSwitchingCam && videoEl.readyState >= 2 && videoEl.videoWidth > 0;
         if (ready) {
           try {
+            const iterStart = performance.now();
             await runRVMSegmentation(facingMode === 'user');
-            fpsCount++;
-            const tNow = performance.now();
-            if (tNow - fpsT >= 1000) {
-              maskFps = Math.round((fpsCount * 1000) / (tNow - fpsT));
-              fpsCount = 0; fpsT = tNow;
-              updateStatus();
+            iterTimes.push(performance.now() - iterStart);
+            if (iterTimes.length > 8) iterTimes.shift();
+            if (tierCooldown > 0) {
+              tierCooldown--;
+            } else if (AUTO_TIER && iterTimes.length >= 6) {
+              const avg = iterTimes.reduce((x, y) => x + y, 0) / iterTimes.length;
+              if (avg > 140 && tier > 0) { tierCeil = tier - 1; setTier(tier - 1); }
+              else if (avg < 55 && tier < tierCeil) setTier(tier + 1);
             }
+            fpsCount++;
           } catch (e) {
             console.warn('RVM frame error:', e);
             const msg = ((e && e.name) ? e.name + ': ' : '') + String((e && e.message) || e);
@@ -592,8 +614,17 @@
     let lastT = performance.now();
     function loop() {
       const now = performance.now();
+      if (now - lastT < 1000 / RENDER_FPS_CAP - 5) { requestAnimationFrame(loop); return; }
       const dt = Math.min(0.05, (now - lastT) / 1000);
       lastT = now;
+
+      uiCount++;
+      if (now - fpsT >= 1000) {
+        maskFps = Math.round((fpsCount * 1000) / (now - fpsT));
+        uiFps = Math.round((uiCount * 1000) / (now - fpsT));
+        fpsCount = 0; uiCount = 0; fpsT = now;
+        updateStatus();
+      }
 
       if (!isSwitchingCam && videoEl.readyState >= 2 && videoEl.videoWidth > 0) {
         camCtx.clearRect(0, 0, camCanvas.width, camCanvas.height);
