@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no" />
-  <title>TikTok Style VRM Filter - RVM Fixed</title>
+  <title>TikTok Style VRM Filter - RVM Debug</title>
   <style>
     * { box-sizing: border-box; }
     html, body {
@@ -68,11 +68,15 @@
 
     .badge {
       color: #fff;
-      background: rgba(0, 0, 0, 0.58);
+      background: rgba(0, 0, 0, 0.65);
       backdrop-filter: blur(6px);
       padding: 6px 12px;
       border-radius: 999px;
       font-size: 12px;
+      max-width: 72%;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
     }
 
     #controls {
@@ -121,7 +125,7 @@
 <body>
   <div id="filter-frame">
     <div id="top-bar">
-      <span id="status" class="badge">Đang tải RVM &amp; camera...</span>
+      <span id="status" class="badge">Đang nạp RVM...</span>
       <span class="badge">RVM + VRM Filter</span>
     </div>
 
@@ -316,15 +320,16 @@
 
     async function initRVM() {
       try {
-        ort.env.wasm.numThreads = Math.min(4, navigator.hardwareConcurrency || 2);
+        statusEl.innerText = 'Đang nạp RVM...';
+        ort.env.wasm.numThreads = 1;
         rvmSession = await ort.InferenceSession.create(RVM_MODEL_URL, {
-          executionProviders: ['webgl', 'wasm']
+          executionProviders: ['wasm', 'webgl']
         });
         rvmReady = true;
-        statusEl.innerText = 'RVM sẵn sàng';
+        statusEl.innerText = 'RVM OK';
       } catch (err) {
         console.error('Lỗi tải RVM model:', err);
-        statusEl.innerText = 'Thiếu file rvm_mobilenetv3_fp32.onnx';
+        statusEl.innerText = 'Lỗi RVM: ' + (err && err.message ? err.message.slice(0, 45) : 'unknown');
       }
     }
 
@@ -372,7 +377,13 @@
         downsample_ratio: downsampleRatioTensor
       };
 
-      const results = await rvmSession.run(feeds);
+      let results;
+      try {
+        results = await rvmSession.run(feeds);
+      } catch (err) {
+        statusEl.innerText = 'Lỗi run: ' + (err && err.message ? err.message.slice(0, 40) : 'fail');
+        return;
+      }
 
       if (results.r1o) recStates.r1i = results.r1o;
       if (results.r2o) recStates.r2i = results.r2o;
@@ -380,13 +391,15 @@
       if (results.r4o) recStates.r4i = results.r4o;
 
       const alphaTensor = pickAlphaTensor(results);
-      if (!alphaTensor || !alphaTensor.data) return;
+      if (!alphaTensor || !alphaTensor.data) {
+        statusEl.innerText = 'Không thấy output alpha RVM';
+        return;
+      }
 
       const alphaData = alphaTensor.data;
       const outPixels = matteImgData.data;
       const total = RVM_W * RVM_H;
 
-      // Tự nhận biết nếu giá trị nằm ở 0..255 thay vì 0..1
       let maxVal = 0;
       for (let i = 0; i < total; i += 16) {
         if (alphaData[i] > maxVal) maxVal = alphaData[i];
@@ -426,7 +439,6 @@
       personCtx.restore();
     }
 
-    // 2. Three.js VRM
     const scene = new THREE.Scene();
     const camera = new THREE.PerspectiveCamera(45, 9 / 16, 0.1, 50);
     camera.position.set(0, 1.35, 1.9);
@@ -541,10 +553,12 @@
           });
 
           resizeFrame();
-          statusEl.innerText =
-            facingMode === 'environment'
-              ? `RVM Cam sau (${videoEl.videoWidth}x${videoEl.videoHeight})`
-              : `RVM Cam trước (${videoEl.videoWidth}x${videoEl.videoHeight})`;
+          if (rvmReady) {
+            statusEl.innerText =
+              facingMode === 'environment'
+                ? `RVM OK • Cam sau (${videoEl.videoWidth}x${videoEl.videoHeight})`
+                : `RVM OK • Cam trước (${videoEl.videoWidth}x${videoEl.videoHeight})`;
+          }
           opened = true;
           break;
         } catch (err) {
