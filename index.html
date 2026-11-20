@@ -28,7 +28,7 @@
   <div id="filter-frame">
     <div id="top-bar">
       <span id="status" class="badge">Khởi tạo...</span>
-      <span class="badge">RVM + VRM Filter</span>
+      <span class="badge">RVM + VRM Filter v5</span>
     </div>
 
     <canvas id="cam-canvas"></canvas>
@@ -102,6 +102,7 @@
 
     let rvmSession = null;
     let rvmWorker = null;
+    let rvmModelBytes = null;
     let rvmReady = false;
     let rvmStatusText = 'Đang nạp RVM...';
     let rvmFullMsg = '';
@@ -240,6 +241,7 @@
           throw new Error('File .onnx chỉ ' + modelBytes.length + ' byte. Có thể là Git LFS pointer hoặc sai file. File RVM mobilenetv3 fp32 thật nặng khoảng 14 MB.');
         }
 
+        rvmModelBytes = modelBytes;
         let started = false;
         if (RVM_USE_WORKER) {
           try {
@@ -379,8 +381,18 @@
             await runRVMSegmentation(facingMode === 'user');
           } catch (e) {
             console.warn('RVM frame error:', e);
+            const msg = ((e && e.name) ? e.name + ': ' : '') + String((e && e.message) || e);
+            if (rvmWorker) {
+              rvmWorker.terminate(); rvmWorker = null; runResolve = runReject = null;
+              try {
+                rvmSession = await ort.InferenceSession.create(rvmModelBytes, { executionProviders: ['wasm'] });
+                resetRecurrentStates();
+                setRvm('RVM OK • luồng chính', 'Worker lỗi nên đã chuyển sang luồng chính: ' + msg);
+                continue;
+              } catch (e2) { /* rơi xuống báo lỗi bên dưới */ }
+            }
             resetRecurrentStates();
-            setRvm('Run lỗi (chạm để xem)', String((e && e.message) || e));
+            setRvm('Run lỗi (chạm để xem)', msg);
             await new Promise((r) => setTimeout(r, 500));
           }
           await new Promise((r) => setTimeout(r, 0));
