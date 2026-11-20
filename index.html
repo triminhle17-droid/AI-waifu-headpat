@@ -16,10 +16,10 @@
     #person-canvas { z-index: 3; pointer-events: none; }
     #video { display: none; }
     #top-bar { position: absolute; top: 12px; left: 12px; right: 12px; z-index: 10; display: flex; justify-content: space-between; align-items: center; gap: 8px; pointer-events: none; }
-    .badge { color: #fff; background: rgba(0,0,0,.68); backdrop-filter: blur(6px); padding: 6px 12px; border-radius: 999px; font-size: 12px; max-width: 72%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .badge { color: #fff; background: rgba(0,0,0,.68); padding: 6px 12px; border-radius: 999px; font-size: 12px; max-width: 72%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     #status { pointer-events: auto; }
     #controls { position: absolute; right: 10px; bottom: 96px; z-index: 10; display: flex; flex-direction: column; gap: 8px; }
-    .btn { color: #fff; background: rgba(20,20,28,.75); backdrop-filter: blur(6px); padding: 8px 11px; border-radius: 13px; font-size: 11.5px; font-weight: 600; cursor: pointer; border: 1px solid rgba(255,255,255,.15); text-align: center; white-space: nowrap; }
+    .btn { color: #fff; background: rgba(20,20,28,.75); padding: 8px 11px; border-radius: 13px; font-size: 11.5px; font-weight: 600; cursor: pointer; border: 1px solid rgba(255,255,255,.15); text-align: center; white-space: nowrap; }
     .btn.active { background: #ff2b55; border-color: #ff2b55; }
     #bottom-bar { position: absolute; bottom: 16px; left: 10px; right: 10px; z-index: 10; display: flex; flex-wrap: wrap; justify-content: center; gap: 6px; }
   </style>
@@ -61,8 +61,9 @@
     // ===== CẤU HÌNH =====
     const RVM_MODEL_URL = './rvm_mobilenetv3_fp32.onnx';
     const RVM_EXTERNAL_DATA_URL = RVM_MODEL_URL + '.data'; // chỉ dùng nếu model có file .data đi kèm
-    const RVM_W = 270, RVM_H = 480;  // đúng tỉ lệ 9:16 để lớp người khớp với camera
-    const RVM_RATIO = 0.4;           // tăng (0.5-0.6) = nét hơn nhưng chậm hơn
+    const RVM_W = 180, RVM_H = 320;  // đúng tỉ lệ 9:16. Nhỏ hơn = nhanh hơn (thử 216x384 nếu muốn nét hơn)
+    const RVM_RATIO = 0.6;           // giảm xuống 0.5 nếu vẫn chậm, tăng lên nếu viền người bị răng cưa
+    const RVM_USE_WORKER = true;     // chạy ONNX trong worker; đổi thành false nếu báo 'Run lỗi'
     const ARM_SIGN = 1;              // đổi thành -1 nếu tay quay ngược chiều
 
     const frameEl = document.getElementById('filter-frame');
@@ -81,7 +82,6 @@
     }
     const [rvmInputCanvas, rvmInputCtx] = makeCanvas(RVM_W, RVM_H, { willReadFrequently: true });
     const [matteCanvas, matteCtx] = makeCanvas(RVM_W, RVM_H);
-    const [cutoutCanvas, cutoutCtx] = makeCanvas(RVM_W, RVM_H);
     const matteImgData = matteCtx.createImageData(RVM_W, RVM_H);
 
     const btnCam = document.getElementById('btn-cam');
@@ -97,6 +97,7 @@
     let facingMode = 'environment';
     let occlusionEnabled = true;
     let isSwitchingCam = false;
+    let matteFresh = false;
     let currentVrm = null;
 
     let rvmSession = null;
@@ -239,17 +240,16 @@
         }
 
         const opts = { executionProviders: ['wasm'] };
-        try {
-          rvmSession = await ort.InferenceSession.create(modelBytes, opts);
-        } catch (e) {
-          if (!/external/i.test(String((e && e.message) || e))) throw e;
-          // Model dùng external data: nạp thêm file .data
-          setRvm('Đang nạp file .data...');
-          const dataBytes = await fetchBytes(RVM_EXTERNAL_DATA_URL);
-          rvmSession = await ort.InferenceSession.create(modelBytes, {
-            ...opts,
-            externalData: [{ path: RVM_EXTERNAL_DATA_URL.split('/').pop(), data: dataBytes }]
-          });
+        // Worker giúp suy luận không chặn luồng chính (giữ FPS vẽ cao); lỗi thì quay về luồng chính
+        for (const proxy of RVM_USE_WORKER ? [true, false] : [false]) {
+          try {
+            ort.env.wasm.proxy = proxy;
+            rvmSession = await ort.InferenceSession.create(modelBytes, opts);
+            break;
+          } catch (e) {
+            console.warn('ORT proxy=' + proxy + ' lỗi:', e);
+            if (!proxy) throw e;
+          }
         }
 
         rvmReady = true;
@@ -305,20 +305,7 @@
       }
       matteCtx.putImageData(matteImgData, 0, 0);
 
-      cutoutCtx.clearRect(0, 0, RVM_W, RVM_H);
-      cutoutCtx.save();
-      cutoutCtx.globalCompositeOperation = 'source-over';
-      cutoutCtx.drawImage(rvmInputCanvas, 0, 0);
-      cutoutCtx.globalCompositeOperation = 'destination-in';
-      cutoutCtx.drawImage(matteCanvas, 0, 0);
-      cutoutCtx.restore();
-
-      const w = personCanvas.width, h = personCanvas.height;
-      if (!w || !h) return;
-      personCtx.clearRect(0, 0, w, h);
-      personCtx.imageSmoothingEnabled = true;
-      personCtx.imageSmoothingQuality = 'high';
-      personCtx.drawImage(cutoutCanvas, 0, 0, w, h);
+      matteFresh = true;
     }
 
     // Vòng matting chạy riêng, không làm chậm vòng render
@@ -394,6 +381,7 @@
       if (isSwitchingCam) return;
       isSwitchingCam = true;
       resetRecurrentStates();
+      matteFresh = false;
       personCtx.clearRect(0, 0, personCanvas.width, personCanvas.height);
       updateStatus();
 
@@ -440,7 +428,7 @@
       personCanvas.width = w; personCanvas.height = h;
       camera.aspect = w / h;
       camera.updateProjectionMatrix();
-      renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+      renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.5));
       renderer.setSize(w, h);
     }
 
@@ -459,6 +447,7 @@
       btnOcc.classList.toggle('active', occlusionEnabled);
       btnOcc.innerText = occlusionEnabled ? 'Che người: BẬT' : 'Che người: TẮT';
       if (!occlusionEnabled) {
+        matteFresh = false;
         personCtx.clearRect(0, 0, personCanvas.width, personCanvas.height);
         resetRecurrentStates();
       }
@@ -526,6 +515,16 @@
         drawCover(camCtx, videoEl, camCanvas.width, camCanvas.height, facingMode === 'user');
       }
 
+      if (occlusionEnabled && matteFresh && !isSwitchingCam) {
+        const pw = personCanvas.width, ph = personCanvas.height;
+        personCtx.globalCompositeOperation = 'source-over';
+        personCtx.clearRect(0, 0, pw, ph);
+        personCtx.drawImage(camCanvas, 0, 0);
+        personCtx.globalCompositeOperation = 'destination-in';
+        personCtx.drawImage(matteCanvas, 0, 0, pw, ph);
+        personCtx.globalCompositeOperation = 'source-over';
+      }
+
       if (currentVrm) {
         if (poseIdx === 1) applyPose(now * 0.001);
         currentVrm.update(dt);
@@ -542,4 +541,3 @@
   </script>
 </body>
 </html>
-
