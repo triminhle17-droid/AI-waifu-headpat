@@ -6,120 +6,22 @@
   <title>TikTok Style VRM Filter - RVM</title>
   <style>
     * { box-sizing: border-box; }
-    html, body {
-      margin: 0;
-      padding: 0;
-      width: 100%;
-      height: 100%;
-      overflow: hidden;
-      background: #0b0b0f;
-      font-family: sans-serif;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      touch-action: none;
-    }
-
-    #filter-frame {
-      position: relative;
-      width: 100vw;
-      height: 100vh;
-      max-width: 480px;
-      aspect-ratio: 9 / 16;
-      max-height: 100vh;
-      overflow: hidden;
-      background: #000;
-      box-shadow: 0 12px 40px rgba(0, 0, 0, 0.7);
-    }
-
-    @media (min-width: 600px) {
-      #filter-frame {
-        height: 92vh;
-        border-radius: 22px;
-        border: 1px solid rgba(255, 255, 255, 0.12);
-      }
-    }
-
-    #cam-canvas, #vrm-canvas, #person-canvas {
-      position: absolute;
-      inset: 0;
-      width: 100%;
-      height: 100%;
-    }
+    html, body { margin: 0; padding: 0; width: 100%; height: 100%; overflow: hidden; background: #0b0b0f; font-family: sans-serif; display: flex; align-items: center; justify-content: center; touch-action: none; }
+    #filter-frame { position: relative; width: 100vw; height: 100vh; max-width: 480px; aspect-ratio: 9 / 16; max-height: 100vh; overflow: hidden; background: #000; box-shadow: 0 12px 40px rgba(0,0,0,.7); }
+    @media (min-width: 600px) { #filter-frame { height: 92vh; border-radius: 22px; border: 1px solid rgba(255,255,255,.12); } }
+    #cam-canvas, #vrm-canvas, #person-canvas { position: absolute; inset: 0; width: 100%; height: 100%; }
     #cam-canvas { z-index: 1; pointer-events: none; }
     #vrm-canvas { z-index: 2; cursor: grab; }
     #vrm-canvas:active { cursor: grabbing; }
     #person-canvas { z-index: 3; pointer-events: none; }
-
     #video { display: none; }
-
-    #top-bar {
-      position: absolute;
-      top: 12px;
-      left: 12px;
-      right: 12px;
-      z-index: 10;
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      gap: 8px;
-      pointer-events: none;
-    }
-
-    .badge {
-      color: #fff;
-      background: rgba(0, 0, 0, 0.68);
-      backdrop-filter: blur(6px);
-      padding: 6px 12px;
-      border-radius: 999px;
-      font-size: 12px;
-      max-width: 72%;
-      overflow: hidden;
-      text-overflow: ellipsis;
-      white-space: nowrap;
-    }
-
-    #controls {
-      position: absolute;
-      right: 10px;
-      bottom: 96px;
-      z-index: 10;
-      display: flex;
-      flex-direction: column;
-      gap: 8px;
-    }
-
-    .btn {
-      border: none;
-      color: #fff;
-      background: rgba(20, 20, 28, 0.75);
-      backdrop-filter: blur(6px);
-      padding: 8px 11px;
-      border-radius: 13px;
-      font-size: 11.5px;
-      font-weight: 600;
-      cursor: pointer;
-      border: 1px solid rgba(255, 255, 255, 0.15);
-      text-align: center;
-      white-space: nowrap;
-    }
-
-    .btn.active {
-      background: #ff2b55;
-      border-color: #ff2b55;
-    }
-
-    #bottom-bar {
-      position: absolute;
-      bottom: 16px;
-      left: 10px;
-      right: 10px;
-      z-index: 10;
-      display: flex;
-      flex-wrap: wrap;
-      justify-content: center;
-      gap: 6px;
-    }
+    #top-bar { position: absolute; top: 12px; left: 12px; right: 12px; z-index: 10; display: flex; justify-content: space-between; align-items: center; gap: 8px; pointer-events: none; }
+    .badge { color: #fff; background: rgba(0,0,0,.68); backdrop-filter: blur(6px); padding: 6px 12px; border-radius: 999px; font-size: 12px; max-width: 72%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    #status { pointer-events: auto; }
+    #controls { position: absolute; right: 10px; bottom: 96px; z-index: 10; display: flex; flex-direction: column; gap: 8px; }
+    .btn { color: #fff; background: rgba(20,20,28,.75); backdrop-filter: blur(6px); padding: 8px 11px; border-radius: 13px; font-size: 11.5px; font-weight: 600; cursor: pointer; border: 1px solid rgba(255,255,255,.15); text-align: center; white-space: nowrap; }
+    .btn.active { background: #ff2b55; border-color: #ff2b55; }
+    #bottom-bar { position: absolute; bottom: 16px; left: 10px; right: 10px; z-index: 10; display: flex; flex-wrap: wrap; justify-content: center; gap: 6px; }
   </style>
 </head>
 <body>
@@ -156,9 +58,12 @@
   <script src="https://cdn.jsdelivr.net/npm/onnxruntime-web@1.17.3/dist/ort.min.js"></script>
 
   <script>
+    // ===== CẤU HÌNH =====
     const RVM_MODEL_URL = './rvm_mobilenetv3_fp32.onnx';
-    const RVM_W = 288;
-    const RVM_H = 384;
+    const RVM_EXTERNAL_DATA_URL = RVM_MODEL_URL + '.data'; // chỉ dùng nếu model có file .data đi kèm
+    const RVM_W = 270, RVM_H = 480;  // đúng tỉ lệ 9:16 để lớp người khớp với camera
+    const RVM_RATIO = 0.4;           // tăng (0.5-0.6) = nét hơn nhưng chậm hơn
+    const ARM_SIGN = 1;              // đổi thành -1 nếu tay quay ngược chiều
 
     const frameEl = document.getElementById('filter-frame');
     const statusEl = document.getElementById('status');
@@ -169,21 +74,15 @@
     const personCanvas = document.getElementById('person-canvas');
     const personCtx = personCanvas.getContext('2d');
 
-    const rvmInputCanvas = document.createElement('canvas');
-    rvmInputCanvas.width = RVM_W;
-    rvmInputCanvas.height = RVM_H;
-    const rvmInputCtx = rvmInputCanvas.getContext('2d', { willReadFrequently: true });
-
-    const matteCanvas = document.createElement('canvas');
-    matteCanvas.width = RVM_W;
-    matteCanvas.height = RVM_H;
-    const matteCtx = matteCanvas.getContext('2d');
+    function makeCanvas(w, h, opts) {
+      const c = document.createElement('canvas');
+      c.width = w; c.height = h;
+      return [c, c.getContext('2d', opts)];
+    }
+    const [rvmInputCanvas, rvmInputCtx] = makeCanvas(RVM_W, RVM_H, { willReadFrequently: true });
+    const [matteCanvas, matteCtx] = makeCanvas(RVM_W, RVM_H);
+    const [cutoutCanvas, cutoutCtx] = makeCanvas(RVM_W, RVM_H);
     const matteImgData = matteCtx.createImageData(RVM_W, RVM_H);
-
-    const cutoutCanvas = document.createElement('canvas');
-    cutoutCanvas.width = RVM_W;
-    cutoutCanvas.height = RVM_H;
-    const cutoutCtx = cutoutCanvas.getContext('2d');
 
     const btnCam = document.getElementById('btn-cam');
     const btnOcc = document.getElementById('btn-occ');
@@ -197,34 +96,28 @@
 
     let facingMode = 'environment';
     let occlusionEnabled = true;
-    let isMatting = false;
     let isSwitchingCam = false;
     let currentVrm = null;
 
     let rvmSession = null;
     let rvmReady = false;
     let rvmStatusText = 'Đang nạp RVM...';
-    let recStates = {
-      r1i: new ort.Tensor('float32', new Float32Array(1), [1, 1, 1, 1]),
-      r2i: new ort.Tensor('float32', new Float32Array(1), [1, 1, 1, 1]),
-      r3i: new ort.Tensor('float32', new Float32Array(1), [1, 1, 1, 1]),
-      r4i: new ort.Tensor('float32', new Float32Array(1), [1, 1, 1, 1])
-    };
-    const downsampleRatioTensor = new ort.Tensor('float32', new Float32Array([0.375]), [1]);
+    let rvmFullMsg = '';
+
+    const emptyState = () => new ort.Tensor('float32', new Float32Array(1), [1, 1, 1, 1]);
+    let recStates = { r1i: emptyState(), r2i: emptyState(), r3i: emptyState(), r4i: emptyState() };
+    const downsampleRatioTensor = new ort.Tensor('float32', new Float32Array([RVM_RATIO]), [1]);
+
+    function resetRecurrentStates() {
+      recStates = { r1i: emptyState(), r2i: emptyState(), r3i: emptyState(), r4i: emptyState() };
+    }
 
     function updateStatus() {
       const camLabel = facingMode === 'environment' ? 'Cam sau' : 'Cam trước';
       statusEl.innerText = `${camLabel} • ${rvmStatusText}`;
     }
-
-    function resetRecurrentStates() {
-      recStates = {
-        r1i: new ort.Tensor('float32', new Float32Array(1), [1, 1, 1, 1]),
-        r2i: new ort.Tensor('float32', new Float32Array(1), [1, 1, 1, 1]),
-        r3i: new ort.Tensor('float32', new Float32Array(1), [1, 1, 1, 1]),
-        r4i: new ort.Tensor('float32', new Float32Array(1), [1, 1, 1, 1])
-      };
-    }
+    // Chạm vào thanh trạng thái để xem lỗi đầy đủ
+    statusEl.addEventListener('click', () => { if (rvmFullMsg) alert(rvmFullMsg); });
 
     const presets = [
       { label: 'Giữa', x: 0.0, y: 0.12, z: -0.15 },
@@ -237,7 +130,7 @@
     let dragMode = 'xy';
 
     const expressions = [
-      { label: 'Vui', name: THREE.VRMSBlendShapePresetName ? THREE.VRMSBlendShapePresetName.Joy : 'joy' },
+      { label: 'Vui', name: 'joy' },
       { label: 'Cười nham hiểm', name: 'fun' },
       { label: 'Ngạc nhiên', name: 'surprised' },
       { label: 'Bình thường', name: 'neutral' }
@@ -256,51 +149,35 @@
     function applyExpression() {
       if (!currentVrm || !currentVrm.blendShapeProxy) return;
       const proxy = currentVrm.blendShapeProxy;
-      expressions.forEach((e) => {
-        if (e.name) proxy.setValue(e.name, 0);
-      });
+      expressions.forEach((e) => proxy.setValue(e.name, 0));
       const current = expressions[exprIdx];
-      if (current.name && current.name !== 'neutral') {
-        proxy.setValue(current.name, 1.0);
-      }
+      if (current.name !== 'neutral') proxy.setValue(current.name, 1.0);
       proxy.update();
     }
 
-    function resetPoseBones() {
-      if (!currentVrm || !currentVrm.humanoid) return;
-      const boneNames = [
-        THREE.VRMSchema.HumanoidBoneName.LeftUpperArm,
-        THREE.VRMSchema.HumanoidBoneName.LeftLowerArm,
-        THREE.VRMSchema.HumanoidBoneName.RightUpperArm,
-        THREE.VRMSchema.HumanoidBoneName.RightLowerArm
-      ];
-      boneNames.forEach((b) => {
-        const node = currentVrm.humanoid.getBoneNode(b);
-        if (node) node.rotation.set(0, 0, 0);
-      });
+    function bone(name) {
+      return currentVrm.humanoid.getBoneNode(THREE.VRMSchema.HumanoidBoneName[name]);
     }
 
-    function applyPose(timeSec = 0) {
+    function applyPose(t = 0) {
       if (!currentVrm || !currentVrm.humanoid) return;
-      resetPoseBones();
+      const lU = bone('LeftUpperArm'), lL = bone('LeftLowerArm');
+      const rU = bone('RightUpperArm'), rL = bone('RightLowerArm');
+      [lU, lL, rU, rL].forEach((n) => n && n.rotation.set(0, 0, 0));
+      const s = ARM_SIGN;
 
-      const lUpper = currentVrm.humanoid.getBoneNode(THREE.VRMSchema.HumanoidBoneName.LeftUpperArm);
-      const lLower = currentVrm.humanoid.getBoneNode(THREE.VRMSchema.HumanoidBoneName.LeftLowerArm);
-      const rUpper = currentVrm.humanoid.getBoneNode(THREE.VRMSchema.HumanoidBoneName.RightUpperArm);
-      const rLower = currentVrm.humanoid.getBoneNode(THREE.VRMSchema.HumanoidBoneName.RightLowerArm);
-
-      if (poseIdx === 1) {
-        if (rUpper) { rUpper.rotation.z = -2.35; rUpper.rotation.x = 0.25; }
-        if (rLower) { rLower.rotation.z = -0.45 + Math.sin(timeSec * 6) * 0.25; }
-        if (lUpper) { lUpper.rotation.z = 0.2; }
-      } else if (poseIdx === 2) {
-        if (lUpper) { lUpper.rotation.z = 0.65; lUpper.rotation.x = -0.2; }
-        if (lLower) { lLower.rotation.y = 1.25; }
-        if (rUpper) { rUpper.rotation.z = -0.65; rUpper.rotation.x = -0.2; }
-        if (rLower) { rLower.rotation.y = -1.25; }
-      } else {
-        if (lUpper) { lUpper.rotation.z = 0.15; }
-        if (rUpper) { rUpper.rotation.z = -0.15; }
+      if (poseIdx === 1) {          // chào tay (tay phải giơ lên và vẫy)
+        if (rU) rU.rotation.z = 1.0 * s;
+        if (rL) rL.rotation.z = (0.7 + Math.sin(t * 6) * 0.3) * s;
+        if (lU) lU.rotation.z = 1.2 * s;
+      } else if (poseIdx === 2) {   // chống hông
+        if (lU) lU.rotation.z = 0.9 * s;
+        if (lL) lL.rotation.y = -1.2 * s;
+        if (rU) rU.rotation.z = -0.9 * s;
+        if (rL) rL.rotation.y = 1.2 * s;
+      } else {                      // đứng thẳng, hạ tay xuống
+        if (lU) lU.rotation.z = 1.2 * s;
+        if (rU) rU.rotation.z = -1.2 * s;
       }
     }
 
@@ -308,152 +185,146 @@
       const sw = source.videoWidth || source.width;
       const sh = source.videoHeight || source.height;
       if (!sw || !sh || !w || !h) return;
-
       const scale = Math.max(w / sw, h / sh);
-      const dw = sw * scale;
-      const dh = sh * scale;
-      const dx = (w - dw) * 0.5;
-      const dy = (h - dh) * 0.5;
-
+      const dw = sw * scale, dh = sh * scale;
       ctx.save();
-      if (mirror) {
-        ctx.translate(w, 0);
-        ctx.scale(-1, 1);
-      }
-      ctx.drawImage(source, dx, dy, dw, dh);
+      if (mirror) { ctx.translate(w, 0); ctx.scale(-1, 1); }
+      ctx.drawImage(source, (w - dw) * 0.5, (h - dh) * 0.5, dw, dh);
       ctx.restore();
     }
 
-    async function initRVM() {
-      rvmStatusText = 'Đang nạp RVM...';
+    // ===== RVM =====
+    async function fetchBytes(url) {
+      const r = await fetch(url, { cache: 'no-store' });
+      if (!r.ok) throw new Error('HTTP ' + r.status + ' khi tải ' + url);
+      return new Uint8Array(await r.arrayBuffer());
+    }
+
+    function setRvm(short, full) {
+      rvmStatusText = short;
+      rvmFullMsg = full || '';
       updateStatus();
+    }
+
+    async function initRVM() {
+      setRvm('Đang nạp RVM...');
       try {
         ort.env.wasm.numThreads = 1;
-        rvmSession = await ort.InferenceSession.create(RVM_MODEL_URL, {
-          executionProviders: ['wasm', 'webgl']
-        });
+        ort.env.wasm.wasmPaths = 'https://cdn.jsdelivr.net/npm/onnxruntime-web@1.17.3/dist/';
+
+        const modelBytes = await fetchBytes(RVM_MODEL_URL);
+        if (modelBytes.length < 1000000) {
+          throw new Error('File .onnx chỉ ' + modelBytes.length + ' byte. Có thể là Git LFS pointer hoặc sai file. File RVM mobilenetv3 fp32 thật nặng khoảng 14 MB.');
+        }
+
+        const opts = { executionProviders: ['wasm'] };
+        try {
+          rvmSession = await ort.InferenceSession.create(modelBytes, opts);
+        } catch (e) {
+          if (!/external/i.test(String((e && e.message) || e))) throw e;
+          // Model dùng external data: nạp thêm file .data
+          setRvm('Đang nạp file .data...');
+          const dataBytes = await fetchBytes(RVM_EXTERNAL_DATA_URL);
+          rvmSession = await ort.InferenceSession.create(modelBytes, {
+            ...opts,
+            externalData: [{ path: RVM_EXTERNAL_DATA_URL.split('/').pop(), data: dataBytes }]
+          });
+        }
+
         rvmReady = true;
-        rvmStatusText = 'RVM OK';
+        setRvm('RVM OK');
+        matteLoop();
       } catch (err) {
+        console.error('RVM init error:', err);
+        const msg = String((err && err.message) || err);
         rvmReady = false;
-        rvmStatusText = 'RVM lỗi: ' + (err && err.message ? err.message.slice(0, 32) : 'tải thất bại');
+        setRvm('RVM lỗi (chạm để xem)', msg);
       }
-      updateStatus();
     }
 
     function canvasToNCHWTensor(ctx, w, h) {
       const imgData = ctx.getImageData(0, 0, w, h).data;
-      const floatData = new Float32Array(3 * w * h);
       const planeSize = w * h;
-
+      const floatData = new Float32Array(3 * planeSize);
       for (let i = 0; i < planeSize; i++) {
         const px = i * 4;
         floatData[i] = imgData[px] / 255;
         floatData[planeSize + i] = imgData[px + 1] / 255;
         floatData[planeSize * 2 + i] = imgData[px + 2] / 255;
       }
-
       return new ort.Tensor('float32', floatData, [1, 3, h, w]);
     }
 
-    function pickAlphaTensor(results) {
-      if (results.pha && results.pha.data) return results.pha;
-      const pixelCount = RVM_W * RVM_H;
-      for (const key of Object.keys(results)) {
-        const t = results[key];
-        if (t && t.data && t.data.length === pixelCount && !key.startsWith('r')) {
-          return t;
-        }
-      }
-      return null;
-    }
-
     async function runRVMSegmentation(isMirror) {
-      if (!rvmReady || !rvmSession || !occlusionEnabled) return;
-
       rvmInputCtx.clearRect(0, 0, RVM_W, RVM_H);
       drawCover(rvmInputCtx, videoEl, RVM_W, RVM_H, isMirror);
 
-      const srcTensor = canvasToNCHWTensor(rvmInputCtx, RVM_W, RVM_H);
-
-      const feeds = {
-        src: srcTensor,
-        r1i: recStates.r1i,
-        r2i: recStates.r2i,
-        r3i: recStates.r3i,
-        r4i: recStates.r4i,
+      const results = await rvmSession.run({
+        src: canvasToNCHWTensor(rvmInputCtx, RVM_W, RVM_H),
+        r1i: recStates.r1i, r2i: recStates.r2i, r3i: recStates.r3i, r4i: recStates.r4i,
         downsample_ratio: downsampleRatioTensor
-      };
-
-      let results;
-      try {
-        results = await rvmSession.run(feeds);
-      } catch (err) {
-        rvmStatusText = 'Run lỗi: ' + (err && err.message ? err.message.slice(0, 30) : 'fail');
-        updateStatus();
-        return;
-      }
+      });
 
       if (results.r1o) recStates.r1i = results.r1o;
       if (results.r2o) recStates.r2i = results.r2o;
       if (results.r3o) recStates.r3i = results.r3o;
       if (results.r4o) recStates.r4i = results.r4o;
 
-      const alphaTensor = pickAlphaTensor(results);
-      if (!alphaTensor || !alphaTensor.data) return;
+      const alphaData = results.pha && results.pha.data;
+      if (!alphaData) return;
 
-      const alphaData = alphaTensor.data;
-      const outPixels = matteImgData.data;
+      const out = matteImgData.data;
       const total = RVM_W * RVM_H;
-
-      let maxVal = 0;
-      for (let i = 0; i < total; i += 16) {
-        if (alphaData[i] > maxVal) maxVal = alphaData[i];
-      }
-      const scaleDiv = maxVal > 1.5 ? 255 : 1;
-
       for (let i = 0; i < total; i++) {
-        let a = (alphaData[i] || 0) / scaleDiv;
-        if (a < 0.03) a = 0;
-        else if (a > 0.7) a = 1;
-        const alphaByte = Math.max(0, Math.min(255, Math.round(a * 255)));
-
+        let a = alphaData[i] || 0;
+        if (a < 0.03) a = 0; else if (a > 0.7) a = 1;
         const idx = i * 4;
-        outPixels[idx] = 255;
-        outPixels[idx + 1] = 255;
-        outPixels[idx + 2] = 255;
-        outPixels[idx + 3] = alphaByte;
+        out[idx] = 255; out[idx + 1] = 255; out[idx + 2] = 255;
+        out[idx + 3] = Math.round(a * 255);
       }
       matteCtx.putImageData(matteImgData, 0, 0);
 
       cutoutCtx.clearRect(0, 0, RVM_W, RVM_H);
       cutoutCtx.save();
-      cutoutCtx.drawImage(rvmInputCanvas, 0, 0, RVM_W, RVM_H);
+      cutoutCtx.globalCompositeOperation = 'source-over';
+      cutoutCtx.drawImage(rvmInputCanvas, 0, 0);
       cutoutCtx.globalCompositeOperation = 'destination-in';
-      cutoutCtx.drawImage(matteCanvas, 0, 0, RVM_W, RVM_H);
+      cutoutCtx.drawImage(matteCanvas, 0, 0);
       cutoutCtx.restore();
 
-      const w = personCanvas.width;
-      const h = personCanvas.height;
+      const w = personCanvas.width, h = personCanvas.height;
       if (!w || !h) return;
-
       personCtx.clearRect(0, 0, w, h);
-      personCtx.save();
       personCtx.imageSmoothingEnabled = true;
       personCtx.imageSmoothingQuality = 'high';
       personCtx.drawImage(cutoutCanvas, 0, 0, w, h);
-      personCtx.restore();
     }
 
+    // Vòng matting chạy riêng, không làm chậm vòng render
+    async function matteLoop() {
+      while (true) {
+        const ready = occlusionEnabled && rvmReady && !isSwitchingCam && videoEl.readyState >= 2 && videoEl.videoWidth > 0;
+        if (ready) {
+          try {
+            await runRVMSegmentation(facingMode === 'user');
+          } catch (e) {
+            console.warn('RVM frame error:', e);
+            setRvm('Run lỗi (chạm để xem)', String((e && e.message) || e));
+            await new Promise((r) => setTimeout(r, 500));
+          }
+          await new Promise((r) => setTimeout(r, 0));
+        } else {
+          await new Promise((r) => setTimeout(r, 100));
+        }
+      }
+    }
+
+    // ===== THREE / VRM =====
     const scene = new THREE.Scene();
     const camera = new THREE.PerspectiveCamera(45, 9 / 16, 0.1, 50);
     camera.position.set(0, 1.35, 1.9);
 
-    const renderer = new THREE.WebGLRenderer({
-      canvas: vrmCanvas,
-      antialias: true,
-      alpha: true
-    });
+    const renderer = new THREE.WebGLRenderer({ canvas: vrmCanvas, antialias: true, alpha: true });
 
     const dirLight = new THREE.DirectionalLight(0xffffff, 1.15);
     dirLight.position.set(1, 2, 2);
@@ -473,29 +344,19 @@
         });
       },
       undefined,
-      () => {
-        rvmStatusText = 'Lỗi model.vrm';
-        updateStatus();
-      }
+      () => { setRvm('Lỗi model.vrm'); }
     );
 
-    let isDragging = false;
-    let lastX = 0;
-    let lastY = 0;
+    let isDragging = false, lastX = 0, lastY = 0;
 
     vrmCanvas.addEventListener('pointerdown', (e) => {
-      isDragging = true;
-      lastX = e.clientX;
-      lastY = e.clientY;
+      isDragging = true; lastX = e.clientX; lastY = e.clientY;
     });
 
     window.addEventListener('pointermove', (e) => {
       if (!isDragging || !currentVrm) return;
-      const dx = e.clientX - lastX;
-      const dy = e.clientY - lastY;
-      lastX = e.clientX;
-      lastY = e.clientY;
-
+      const dx = e.clientX - lastX, dy = e.clientY - lastY;
+      lastX = e.clientX; lastY = e.clientY;
       if (dragMode === 'xy') {
         modelPos.x = Math.max(-1.2, Math.min(1.2, modelPos.x + dx * 0.004));
         modelPos.y = Math.max(-0.8, Math.min(1.0, modelPos.y - dy * 0.004));
@@ -505,43 +366,38 @@
       applyModelTransform();
     });
 
-    window.addEventListener('pointerup', () => {
-      isDragging = false;
-    });
+    window.addEventListener('pointerup', () => { isDragging = false; });
 
+    // ===== CAMERA =====
     async function startCamera() {
       if (isSwitchingCam) return;
       isSwitchingCam = true;
       resetRecurrentStates();
+      personCtx.clearRect(0, 0, personCanvas.width, personCanvas.height);
       updateStatus();
 
       if (videoEl.srcObject) {
-        videoEl.srcObject.getTracks().forEach((track) => track.stop());
+        videoEl.srcObject.getTracks().forEach((t) => t.stop());
         videoEl.srcObject = null;
       }
 
-      const constraintsList =
-        facingMode === 'environment'
-          ? [
-              { video: { facingMode: { ideal: 'environment' }, width: { ideal: 1280 }, height: { ideal: 720 } }, audio: false },
-              { video: { facingMode: 'environment' }, audio: false },
-              { video: true, audio: false }
-            ]
-          : [
-              { video: { facingMode: { ideal: 'user' }, width: { ideal: 1280 }, height: { ideal: 720 } }, audio: false },
-              { video: { facingMode: 'user' }, audio: false }
-            ];
+      const constraintsList = facingMode === 'environment'
+        ? [
+            { video: { facingMode: { ideal: 'environment' }, width: { ideal: 1280 }, height: { ideal: 720 } }, audio: false },
+            { video: { facingMode: 'environment' }, audio: false },
+            { video: true, audio: false }
+          ]
+        : [
+            { video: { facingMode: { ideal: 'user' }, width: { ideal: 1280 }, height: { ideal: 720 } }, audio: false },
+            { video: { facingMode: 'user' }, audio: false }
+          ];
 
       let opened = false;
       for (const constraints of constraintsList) {
         try {
           const stream = await navigator.mediaDevices.getUserMedia(constraints);
           videoEl.srcObject = stream;
-          try {
-            await videoEl.play();
-          } catch (_) {
-            // Safari đôi khi phát tự động qua autoplay + muted
-          }
+          try { await videoEl.play(); } catch (_) { /* autoplay + muted */ }
           resizeFrame();
           opened = true;
           break;
@@ -550,10 +406,7 @@
         }
       }
 
-      if (!opened) {
-        rvmStatusText = 'Không mở được cam';
-      }
-
+      if (!opened) setRvm('Không mở được cam');
       isSwitchingCam = false;
       updateStatus();
     }
@@ -562,12 +415,8 @@
       const rect = frameEl.getBoundingClientRect();
       const w = Math.max(1, Math.floor(rect.width));
       const h = Math.max(1, Math.floor(rect.height));
-
-      camCanvas.width = w;
-      camCanvas.height = h;
-      personCanvas.width = w;
-      personCanvas.height = h;
-
+      camCanvas.width = w; camCanvas.height = h;
+      personCanvas.width = w; personCanvas.height = h;
       camera.aspect = w / h;
       camera.updateProjectionMatrix();
       renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
@@ -576,6 +425,7 @@
 
     window.addEventListener('resize', resizeFrame);
 
+    // ===== NÚT BẤM =====
     btnCam.addEventListener('click', () => {
       if (isSwitchingCam) return;
       facingMode = facingMode === 'environment' ? 'user' : 'environment';
@@ -643,31 +493,21 @@
       applyPose(0);
     });
 
-    async function loop() {
-      const nowSec = performance.now() * 0.001;
+    // ===== VÒNG RENDER =====
+    let lastT = performance.now();
+    function loop() {
+      const now = performance.now();
+      const dt = Math.min(0.05, (now - lastT) / 1000);
+      lastT = now;
 
       if (!isSwitchingCam && videoEl.readyState >= 2 && videoEl.videoWidth > 0) {
-        const isMirror = facingMode === 'user';
         camCtx.clearRect(0, 0, camCanvas.width, camCanvas.height);
-        drawCover(camCtx, videoEl, camCanvas.width, camCanvas.height, isMirror);
-
-        if (occlusionEnabled && rvmReady && !isMatting) {
-          isMatting = true;
-          try {
-            await runRVMSegmentation(isMirror);
-          } catch (e) {
-            console.warn('RVM frame error:', e);
-          } finally {
-            isMatting = false;
-          }
-        }
+        drawCover(camCtx, videoEl, camCanvas.width, camCanvas.height, facingMode === 'user');
       }
 
       if (currentVrm) {
-        if (poseIdx === 1) {
-          applyPose(nowSec);
-        }
-        currentVrm.update(0.016);
+        if (poseIdx === 1) applyPose(now * 0.001);
+        currentVrm.update(dt);
       }
 
       renderer.render(scene, camera);
