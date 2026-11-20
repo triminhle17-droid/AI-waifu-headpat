@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no" />
-  <title>TikTok Style VRM Filter - RVM Matting</title>
+  <title>TikTok Style VRM Filter - RVM Fixed</title>
   <style>
     * { box-sizing: border-box; }
     html, body {
@@ -146,12 +146,9 @@
     </div>
   </div>
 
-  <!-- Three.js + Three-VRM -->
   <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/GLTFLoader.js"></script>
   <script src="https://unpkg.com/@pixiv/three-vrm@0.6.8/lib/three-vrm.js"></script>
-
-  <!-- ONNX Runtime Web cho RVM -->
   <script src="https://cdn.jsdelivr.net/npm/onnxruntime-web@1.17.3/dist/ort.min.js"></script>
 
   <script>
@@ -179,7 +176,6 @@
     const matteCtx = matteCanvas.getContext('2d');
     const matteImgData = matteCtx.createImageData(RVM_W, RVM_H);
 
-    // Canvas trung gian cùng kích thước RVM để cắt người chuẩn trước khi phóng lên personCanvas
     const cutoutCanvas = document.createElement('canvas');
     cutoutCanvas.width = RVM_W;
     cutoutCanvas.height = RVM_H;
@@ -347,6 +343,18 @@
       return new ort.Tensor('float32', floatData, [1, 3, h, w]);
     }
 
+    function pickAlphaTensor(results) {
+      if (results.pha && results.pha.data) return results.pha;
+      const pixelCount = RVM_W * RVM_H;
+      for (const key of Object.keys(results)) {
+        const t = results[key];
+        if (t && t.data && t.data.length === pixelCount && !key.startsWith('r')) {
+          return t;
+        }
+      }
+      return null;
+    }
+
     async function runRVMSegmentation(isMirror) {
       if (!rvmReady || !rvmSession || !occlusionEnabled) return;
 
@@ -371,17 +379,24 @@
       if (results.r3o) recStates.r3i = results.r3o;
       if (results.r4o) recStates.r4i = results.r4o;
 
-      const firstOutputName = rvmSession.outputNames && rvmSession.outputNames[0];
-      const alphaTensor = results.pha || (firstOutputName ? results[firstOutputName] : null);
+      const alphaTensor = pickAlphaTensor(results);
       if (!alphaTensor || !alphaTensor.data) return;
 
       const alphaData = alphaTensor.data;
       const outPixels = matteImgData.data;
+      const total = RVM_W * RVM_H;
 
-      for (let i = 0; i < RVM_W * RVM_H; i++) {
-        let a = alphaData[i] || 0;
-        if (a < 0.1) a = 0;
-        else if (a > 0.85) a = 1;
+      // Tự nhận biết nếu giá trị nằm ở 0..255 thay vì 0..1
+      let maxVal = 0;
+      for (let i = 0; i < total; i += 16) {
+        if (alphaData[i] > maxVal) maxVal = alphaData[i];
+      }
+      const scaleDiv = maxVal > 1.5 ? 255 : 1;
+
+      for (let i = 0; i < total; i++) {
+        let a = (alphaData[i] || 0) / scaleDiv;
+        if (a < 0.03) a = 0;
+        else if (a > 0.7) a = 1;
         const alphaByte = Math.max(0, Math.min(255, Math.round(a * 255)));
 
         const idx = i * 4;
@@ -392,7 +407,6 @@
       }
       matteCtx.putImageData(matteImgData, 0, 0);
 
-      // Cắt phần người/tay trên cutoutCanvas (cùng kích thước RVM_W x RVM_H)
       cutoutCtx.clearRect(0, 0, RVM_W, RVM_H);
       cutoutCtx.save();
       cutoutCtx.drawImage(rvmInputCanvas, 0, 0, RVM_W, RVM_H);
@@ -400,7 +414,6 @@
       cutoutCtx.drawImage(matteCanvas, 0, 0, RVM_W, RVM_H);
       cutoutCtx.restore();
 
-      // Vẽ lớp người/tay đè lên trên vrmCanvas
       const w = personCanvas.width;
       const h = personCanvas.height;
       if (!w || !h) return;
