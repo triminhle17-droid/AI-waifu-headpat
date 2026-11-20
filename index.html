@@ -107,7 +107,6 @@
 
     const emptyState = () => new ort.Tensor('float32', new Float32Array(1), [1, 1, 1, 1]);
     let recStates = { r1i: emptyState(), r2i: emptyState(), r3i: emptyState(), r4i: emptyState() };
-    const downsampleRatioTensor = new ort.Tensor('float32', new Float32Array([RVM_RATIO]), [1]);
 
     function resetRecurrentStates() {
       recStates = { r1i: emptyState(), r2i: emptyState(), r3i: emptyState(), r4i: emptyState() };
@@ -283,7 +282,7 @@
       const results = await rvmSession.run({
         src: canvasToNCHWTensor(rvmInputCtx, RVM_W, RVM_H),
         r1i: recStates.r1i, r2i: recStates.r2i, r3i: recStates.r3i, r4i: recStates.r4i,
-        downsample_ratio: downsampleRatioTensor
+        downsample_ratio: new ort.Tensor('float32', new Float32Array([RVM_RATIO]), [1])
       });
 
       if (results.r1o) recStates.r1i = results.r1o;
@@ -317,6 +316,7 @@
             await runRVMSegmentation(facingMode === 'user');
           } catch (e) {
             console.warn('RVM frame error:', e);
+            resetRecurrentStates();
             setRvm('Run lỗi (chạm để xem)', String((e && e.message) || e));
             await new Promise((r) => setTimeout(r, 500));
           }
