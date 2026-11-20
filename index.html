@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no" />
-  <title>TikTok Style VRM Filter - Full</title>
+  <title>TikTok Style VRM Filter - RVM Matting</title>
   <style>
     * { box-sizing: border-box; }
     html, body {
@@ -121,8 +121,8 @@
 <body>
   <div id="filter-frame">
     <div id="top-bar">
-      <span id="status" class="badge">Đang bật camera...</span>
-      <span class="badge">VRM Center Filter</span>
+      <span id="status" class="badge">Đang tải RVM &amp; camera...</span>
+      <span class="badge">RVM + VRM Filter</span>
     </div>
 
     <canvas id="cam-canvas"></canvas>
@@ -146,12 +146,20 @@
     </div>
   </div>
 
+  <!-- Three.js + Three-VRM -->
   <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/GLTFLoader.js"></script>
   <script src="https://unpkg.com/@pixiv/three-vrm@0.6.8/lib/three-vrm.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/selfie_segmentation/selfie_segmentation.js"></script>
+
+  <!-- ONNX Runtime Web cho RVM -->
+  <script src="https://cdn.jsdelivr.net/npm/onnxruntime-web@1.17.3/dist/ort.min.js"></script>
 
   <script>
+    const RVM_MODEL_URL = './rvm_mobilenetv3_fp32.onnx';
+    // Kích thước suy luận RVM (bội số của 32): 384x512 hoặc 288x384 để mượt trên điện thoại
+    const RVM_W = 288;
+    const RVM_H = 384;
+
     const frameEl = document.getElementById('filter-frame');
     const statusEl = document.getElementById('status');
     const videoEl = document.getElementById('video');
@@ -160,6 +168,18 @@
     const vrmCanvas = document.getElementById('vrm-canvas');
     const personCanvas = document.getElementById('person-canvas');
     const personCtx = personCanvas.getContext('2d');
+
+    // Canvas hạ độ phân giải để đưa vào RVM và xuất alpha matte
+    const rvmInputCanvas = document.createElement('canvas');
+    rvmInputCanvas.width = RVM_W;
+    rvmInputCanvas.height = RVM_H;
+    const rvmInputCtx = rvmInputCanvas.getContext('2d', { willReadFrequently: true });
+
+    const matteCanvas = document.createElement('canvas');
+    matteCanvas.width = RVM_W;
+    matteCanvas.height = RVM_H;
+    const matteCtx = matteCanvas.getContext('2d');
+    const matteImgData = matteCtx.createImageData(RVM_W, RVM_H);
 
     const btnCam = document.getElementById('btn-cam');
     const btnOcc = document.getElementById('btn-occ');
@@ -173,11 +193,31 @@
 
     let facingMode = 'environment';
     let occlusionEnabled = true;
-    let isSegmenting = false;
+    let isMatting = false;
     let isSwitchingCam = false;
     let currentVrm = null;
 
-    // Đặt lùi nhẹ và scale vừa phải để đưa tay gần không bị che khuất toàn bộ model
+    // Trạng thái RVM session & recurrent states (r1..r4)
+    let rvmSession = null;
+    let rvmReady = false;
+    let recStates = {
+      r1i: new ort.Tensor('float32', new Float32Array(1), [1, 1, 1, 1]),
+      r2i: new ort.Tensor('float32', new Float32Array(1), [1, 1, 1, 1]),
+      r3i: new ort.Tensor('float32', new Float32Array(1), [1, 1, 1, 1]),
+      r4i: new ort.Tensor('float32', new Float32Array(1), [1, 1, 1, 1])
+    };
+    const downsampleRatioTensor = new ort.Tensor('float32', new Float32Array([0.375]), [1]);
+
+    function resetRecurrentStates() {
+      recStates = {
+        r1i: new ort.Tensor('float32', new Float32Array(1), [1, 1, 1, 1]),
+        r2i: new ort.Tensor('float32', new Float32Array(1), [1, 1, 1, 1]),
+        r3i: new ort.Tensor('float32', new Float32Array(1), [1, 1, 1, 1]),
+        r4i: new ort.Tensor('float32', new Float32Array(1), [1, 1, 1, 1])
+      };
+    }
+
+    // Cấu hình vị trí & scale model
     const presets = [
       { label: 'Giữa', x: 0.0, y: 0.12, z: -0.15 },
       { label: 'Sau phải', x: 0.28, y: 0.14, z: -0.35 },
@@ -186,7 +226,7 @@
     let presetIdx = 0;
     let modelPos = { x: presets[0].x, y: presets[0].y, z: presets[0].z };
     let modelScale = 0.72;
-    let dragMode = 'xy'; // 'xy' | 'z'
+    let dragMode = 'xy';
 
     const expressions = [
       { label: 'Vui', name: THREE.VRMSBlendShapePresetName ? THREE.VRMSBlendShapePresetName.Joy : 'joy' },
@@ -242,28 +282,17 @@
       const rLower = currentVrm.humanoid.getBoneNode(THREE.VRMSchema.HumanoidBoneName.RightLowerArm);
 
       if (poseIdx === 1) {
-        if (rUpper) {
-          rUpper.rotation.z = -2.35;
-          rUpper.rotation.x = 0.25;
-        }
-        if (rLower) {
-          rLower.rotation.z = -0.45 + Math.sin(timeSec * 6) * 0.25;
-        }
-        if (lUpper) lUpper.rotation.z = 0.2;
+        if (rUpper) { rUpper.rotation.z = -2.35; rUpper.rotation.x = 0.25; }
+        if (rLower) { rLower.rotation.z = -0.45 + Math.sin(timeSec * 6) * 0.25; }
+        if (lUpper) { lUpper.rotation.z = 0.2; }
       } else if (poseIdx === 2) {
-        if (lUpper) {
-          lUpper.rotation.z = 0.65;
-          lUpper.rotation.x = -0.2;
-        }
-        if (lLower) lLower.rotation.y = 1.25;
-        if (rUpper) {
-          rUpper.rotation.z = -0.65;
-          rUpper.rotation.x = -0.2;
-        }
-        if (rLower) rLower.rotation.y = -1.25;
+        if (lUpper) { lUpper.rotation.z = 0.65; lUpper.rotation.x = -0.2; }
+        if (lLower) { lLower.rotation.y = 1.25; }
+        if (rUpper) { rUpper.rotation.z = -0.65; rUpper.rotation.x = -0.2; }
+        if (rLower) { rLower.rotation.y = -1.25; }
       } else {
-        if (lUpper) lUpper.rotation.z = 0.15;
-        if (rUpper) rUpper.rotation.z = -0.15;
+        if (lUpper) { lUpper.rotation.z = 0.15; }
+        if (rUpper) { rUpper.rotation.z = -0.15; }
       }
     }
 
@@ -287,7 +316,101 @@
       ctx.restore();
     }
 
-    // 1. Three.js VRM
+    // 1. Khởi tạo RVM ONNX Session
+    async function initRVM() {
+      try {
+        ort.env.wasm.numThreads = Math.min(4, navigator.hardwareConcurrency || 2);
+        rvmSession = await ort.InferenceSession.create(RVM_MODEL_URL, {
+          executionProviders: ['webgl', 'wasm']
+        });
+        rvmReady = true;
+        statusEl.innerText = 'RVM sẵn sàng';
+      } catch (err) {
+        console.error('Lỗi tải RVM model:', err);
+        statusEl.innerText = 'Thiếu file rvm_mobilenetv3_fp32.onnx';
+      }
+    }
+
+    // Chuyển ảnh từ rvmInputCanvas sang Tensor NCHW [1, 3, H, W] (giá trị 0..1)
+    function canvasToNCHWTensor(ctx, w, h) {
+      const imgData = ctx.getImageData(0, 0, w, h).data;
+      const floatData = new Float32Array(3 * w * h);
+      const planeSize = w * h;
+
+      for (let i = 0; i < planeSize; i++) {
+        const px = i * 4;
+        floatData[i] = imgData[px] / 255;
+        floatData[planeSize + i] = imgData[px + 1] / 255;
+        floatData[planeSize * 2 + i] = imgData[px + 2] / 255;
+      }
+
+      return new ort.Tensor('float32', floatData, [1, 3, h, w]);
+    }
+
+    async function runRVMSegmentation(isMirror) {
+      if (!rvmReady || !rvmSession) return;
+
+      rvmInputCtx.clearRect(0, 0, RVM_W, RVM_H);
+      drawCover(rvmInputCtx, videoEl, RVM_W, RVM_H, isMirror);
+
+      const srcTensor = canvasToNCHWTensor(rvmInputCtx, RVM_W, RVM_H);
+
+      const feeds = {
+        src: srcTensor,
+        r1i: recStates.r1i,
+        r2i: recStates.r2i,
+        r3i: recStates.r3i,
+        r4i: recStates.r4i,
+        downsample_ratio: downsampleRatioTensor
+      };
+
+      const results = await rvmSession.run(feeds);
+
+      // Cập nhật recurrent states cho frame kế tiếp
+      if (results.r1o) recStates.r1i = results.r1o;
+      if (results.r2o) recStates.r2i = results.r2o;
+      if (results.r3o) recStates.r3i = results.r3o;
+      if (results.r4o) recStates.r4i = results.r4o;
+
+      const alphaTensor = results.pha || results.out;
+      if (!alphaTensor) return;
+
+      const alphaData = alphaTensor.data;
+      const outPixels = matteImgData.data;
+
+      for (let i = 0; i < RVM_W * RVM_H; i++) {
+        // Ngưỡng nhẹ để giữ chi tiết tay và loại bỏ nhiễu nền nhỏ
+        let a = alphaData[i];
+        if (a < 0.08) a = 0;
+        const alphaByte = Math.max(0, Math.min(255, Math.round(a * 255)));
+
+        const idx = i * 4;
+        outPixels[idx] = 255;
+        outPixels[idx + 1] = 255;
+        outPixels[idx + 2] = 255;
+        outPixels[idx + 3] = alphaByte;
+      }
+
+      matteCtx.putImageData(matteImgData, 0, 0);
+
+      const w = personCanvas.width;
+      const h = personCanvas.height;
+      if (!w || !h || !occlusionEnabled) return;
+
+      personCtx.clearRect(0, 0, w, h);
+      personCtx.save();
+      personCtx.imageSmoothingEnabled = true;
+      personCtx.imageSmoothingQuality = 'high';
+
+      // Vẽ phần người/tay đã tách alpha matte đè lên mô hình VRM
+      drawCover(personCtx, videoEl, w, h, isMirror);
+      personCtx.globalCompositeOperation = 'destination-in';
+      personCtx.drawImage(matteCanvas, 0, 0, w, h);
+
+      personCtx.restore();
+    }
+
+    // 2. Three.js VRM
     const scene = new THREE.Scene();
     const camera = new THREE.PerspectiveCamera(45, 9 / 16, 0.1, 50);
     camera.position.set(0, 1.35, 1.9);
@@ -313,7 +436,6 @@
           applyExpression();
           applyPose(0);
           scene.add(vrm.scene);
-          statusEl.innerText = 'Filter sẵn sàng';
         });
       },
       undefined,
@@ -351,40 +473,11 @@
       isDragging = false;
     });
 
-    // 2. Selfie Segmentation (vẽ trực tiếp không qua getImageData để giảm bệt viền)
-    const selfieSegmentation = new SelfieSegmentation({
-      locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/selfie_segmentation/${file}`
-    });
-
-    selfieSegmentation.setOptions({
-      modelSelection: 1,
-      selfieMode: false
-    });
-
-    selfieSegmentation.onResults((results) => {
-      const w = personCanvas.width;
-      const h = personCanvas.height;
-      if (!w || !h) return;
-
-      personCtx.clearRect(0, 0, w, h);
-      if (!occlusionEnabled || !results.segmentationMask) return;
-
-      const isMirror = facingMode === 'user';
-      personCtx.save();
-      personCtx.imageSmoothingEnabled = true;
-      personCtx.imageSmoothingQuality = 'high';
-
-      drawCover(personCtx, results.image, w, h, isMirror);
-      personCtx.globalCompositeOperation = 'destination-in';
-      drawCover(personCtx, results.segmentationMask, w, h, isMirror);
-
-      personCtx.restore();
-    });
-
     // 3. Camera
     async function startCamera() {
       if (isSwitchingCam) return;
       isSwitchingCam = true;
+      resetRecurrentStates();
       statusEl.innerText = facingMode === 'environment' ? 'Đang mở cam sau...' : 'Đang mở cam trước...';
 
       if (videoEl.srcObject) {
@@ -436,8 +529,8 @@
           resizeFrame();
           statusEl.innerText =
             facingMode === 'environment'
-              ? `Cam sau (${videoEl.videoWidth}x${videoEl.videoHeight})`
-              : `Cam trước (${videoEl.videoWidth}x${videoEl.videoHeight})`;
+              ? `RVM Cam sau (${videoEl.videoWidth}x${videoEl.videoHeight})`
+              : `RVM Cam trước (${videoEl.videoWidth}x${videoEl.videoHeight})`;
           opened = true;
           break;
         } catch (err) {
@@ -483,6 +576,7 @@
       btnOcc.innerText = occlusionEnabled ? 'Che người: BẬT' : 'Che người: TẮT';
       if (!occlusionEnabled) {
         personCtx.clearRect(0, 0, personCanvas.width, personCanvas.height);
+        resetRecurrentStates();
       }
     });
 
@@ -544,12 +638,14 @@
         camCtx.clearRect(0, 0, camCanvas.width, camCanvas.height);
         drawCover(camCtx, videoEl, camCanvas.width, camCanvas.height, isMirror);
 
-        if (occlusionEnabled && !isSegmenting) {
-          isSegmenting = true;
+        if (occlusionEnabled && rvmReady && !isMatting) {
+          isMatting = true;
           try {
-            await selfieSegmentation.send({ image: videoEl });
+            await runRVMSegmentation(isMirror);
+          } catch (e) {
+            console.warn('RVM frame error:', e);
           } finally {
-            isSegmenting = false;
+            isMatting = false;
           }
         }
       }
@@ -566,7 +662,7 @@
     }
 
     resizeFrame();
-    startCamera();
+    initRVM().then(startCamera);
     loop();
   </script>
 </body>
