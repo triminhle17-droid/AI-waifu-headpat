@@ -28,7 +28,7 @@
   <div id="filter-frame">
     <div id="top-bar">
       <span id="status" class="badge">Khởi tạo...</span>
-      <span class="badge">RVM + VRM Filter v7</span>
+      <span class="badge">RVM + VRM Filter v8</span>
     </div>
 
     <canvas id="cam-canvas"></canvas>
@@ -42,6 +42,7 @@
       <button id="btn-drag-mode" class="btn">Kéo: Trái/Phải/Lên/Xuống</button>
       <button id="btn-expr" class="btn">Biểu cảm: Vui</button>
       <button id="btn-pose" class="btn">Tư thế: Đứng thẳng</button>
+      <button id="btn-engine" class="btn">Tách: MediaPipe</button>
     </div>
 
     <div id="bottom-bar">
@@ -65,6 +66,14 @@
     const RVM_TIERS = [[108, 192, 0.8], [144, 256, 0.6], [180, 320, 0.5], [216, 384, 0.5], [270, 480, 0.4]];
     const AUTO_TIER = true;          // đổi false để cố định mức
     const RENDER_FPS_CAP = 30;       // giới hạn FPS vẽ để nhường CPU cho nhận diện
+    const DEFAULT_ENGINE = 'mediapipe'; // 'mediapipe' = chạy GPU, nhanh. 'rvm' = viền đẹp hơn nhưng nặng
+    const MP_W = 144, MP_H = 256;       // ảnh đưa vào MediaPipe (9:16)
+    const MP_MODEL = 'https://storage.googleapis.com/mediapipe-models/image_segmenter/selfie_segmenter/float16/latest/selfie_segmenter.tflite';
+    const MP_BUNDLES = [
+      ['https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/vision_bundle.mjs', 'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm'],
+      ['https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision/vision_bundle.mjs', 'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision/wasm']
+    ];
+    let engine = DEFAULT_ENGINE;
     let tier = 2;
     let RVM_W = RVM_TIERS[tier][0], RVM_H = RVM_TIERS[tier][1], RVM_RATIO = RVM_TIERS[tier][2];
     const ALPHA_LO = 0.25, ALPHA_HI = 0.65; // thu hẹp khoảng này = viền gắt hơn, ít bị mờ/ma
@@ -98,6 +107,7 @@
     const btnZoomOut = document.getElementById('btn-zoom-out');
     const btnZoomIn = document.getElementById('btn-zoom-in');
     const btnReset = document.getElementById('btn-reset');
+    const btnEngine = document.getElementById('btn-engine');
 
     let facingMode = 'environment';
     let occlusionEnabled = true;
@@ -108,6 +118,7 @@
     let rvmSession = null;
     let rvmWorker = null;
     let rvmModelBytes = null;
+    let mpSegmenter = null, mpReady = false, mpDelegate = '', mpLabels = [], mpLastTs = 0, engineSwitching = false, matteLoopStarted = false;
     let rvmReady = false;
     let rvmStatusText = 'Đang nạp RVM...';
     let rvmFullMsg = '';
@@ -124,7 +135,10 @@
 
     function updateStatus() {
       const camLabel = facingMode === 'environment' ? 'Cam sau' : 'Cam trước';
-      statusEl.innerText = `${camLabel} • ${rvmStatusText}${rvmReady && maskFps ? ` • mặt nạ ${maskFps}fps • AI ${aiMs}ms • ${RVM_H}p • UI ${uiFps}fps` : ''}`;
+      const extra = !engineReady() || !maskFps ? '' : engine === 'rvm'
+        ? ` • mặt nạ ${maskFps}fps • AI ${aiMs}ms • ${RVM_H}p • UI ${uiFps}fps`
+        : ` • mặt nạ ${maskFps}fps • UI ${uiFps}fps`;
+      statusEl.innerText = `${camLabel} • ${rvmStatusText}${extra}`;
     }
     // Chạm vào thanh trạng thái để xem lỗi đầy đủ
     statusEl.addEventListener('click', () => { if (rvmFullMsg) alert(rvmFullMsg); });
@@ -265,7 +279,7 @@
 
         rvmReady = true;
         setRvm(rvmWorker ? 'RVM OK • worker' : 'RVM OK • luồng chính');
-        matteLoop();
+        startMatteLoop();
       } catch (err) {
         console.error('RVM init error:', err);
         const msg = String((err && err.message) || err);
@@ -368,8 +382,25 @@
       const alphaData = await inferAlpha(canvasToNCHW(rvmInputCtx, RVM_W, RVM_H));
       if (!alphaData) return;
 
+      commitMatte(alphaData, RVM_W, RVM_H);
+    }
+
+    function engineReady() { return engine === 'mediapipe' ? mpReady : rvmReady; }
+
+    function startMatteLoop() {
+      if (matteLoopStarted) return;
+      matteLoopStarted = true;
+      matteLoop();
+    }
+
+    // Ghi mặt nạ (0..1) vào matteCanvas, siết viền bằng smoothstep
+    function commitMatte(alphaData, w, h) {
+      if (matteCanvas.width !== w || matteCanvas.height !== h) {
+        matteCanvas.width = w; matteCanvas.height = h;
+        matteImgData = matteCtx.createImageData(w, h);
+      }
       const out = matteImgData.data;
-      const total = RVM_W * RVM_H;
+      const total = w * h;
       for (let i = 0; i < total; i++) {
         let a = ((alphaData[i] || 0) - ALPHA_LO) / (ALPHA_HI - ALPHA_LO);
         a = a <= 0 ? 0 : a >= 1 ? 1 : a * a * (3 - 2 * a);
@@ -378,8 +409,86 @@
         out[idx + 3] = Math.round(a * 255);
       }
       matteCtx.putImageData(matteImgData, 0, 0);
-
       matteFresh = true;
+    }
+
+    // ===== MediaPipe (chạy GPU, nhanh hơn RVM nhiều trên máy cũ) =====
+    async function initMP() {
+      setRvm('Đang nạp MediaPipe...');
+      let lastErr;
+      for (const [bundleUrl, wasmUrl] of MP_BUNDLES) {
+        try {
+          const { FilesetResolver, ImageSegmenter } = await import(bundleUrl);
+          const fileset = await FilesetResolver.forVisionTasks(wasmUrl);
+          for (const delegate of ['GPU', 'CPU']) {
+            try {
+              mpSegmenter = await ImageSegmenter.createFromOptions(fileset, {
+                baseOptions: { modelAssetPath: MP_MODEL, delegate },
+                runningMode: 'VIDEO',
+                outputConfidenceMasks: true,
+                outputCategoryMask: false
+              });
+              mpDelegate = delegate;
+              break;
+            } catch (e) { lastErr = e; console.warn('MediaPipe ' + delegate + ' lỗi:', e); }
+          }
+          if (mpSegmenter) break;
+        } catch (e) { lastErr = e; console.warn('Nạp MediaPipe lỗi:', e); }
+      }
+      if (!mpSegmenter) throw lastErr || new Error('Không nạp được MediaPipe');
+      try { mpLabels = mpSegmenter.getLabels() || []; } catch (_) { mpLabels = []; }
+      mpReady = true;
+    }
+
+    function runMPSegmentation(isMirror) {
+      rvmInputCtx.clearRect(0, 0, RVM_W, RVM_H);
+      drawCover(rvmInputCtx, videoEl, RVM_W, RVM_H, isMirror);
+      const ts = Math.max(performance.now(), mpLastTs + 1);
+      mpLastTs = ts;
+      mpSegmenter.segmentForVideo(rvmInputCanvas, ts, (result) => {
+        const masks = result.confidenceMasks;
+        if (!masks || !masks.length) return;
+        let idx = masks.length === 1 ? 0 : masks.length - 1;
+        const k = mpLabels.findIndex((l) => !/background/i.test(l));
+        if (masks.length > 1 && k >= 0 && k < masks.length) idx = k;
+        const m = masks[idx];
+        commitMatte(m.getAsFloat32Array(), m.width, m.height);
+      });
+    }
+
+    function selectEngine(name) {
+      engine = name;
+      if (name === 'mediapipe') {
+        RVM_W = MP_W; RVM_H = MP_H;
+        rvmInputCanvas.width = MP_W; rvmInputCanvas.height = MP_H;
+      } else {
+        setTier(tier);
+      }
+      matteFresh = false;
+      personCtx.clearRect(0, 0, personCanvas.width, personCanvas.height);
+      resetRecurrentStates();
+    }
+
+    async function startEngine() {
+      let mpErr = '';
+      if (engine === 'mediapipe') {
+        try {
+          await initMP();
+          selectEngine('mediapipe');
+          btnEngine.innerText = 'Tách: MediaPipe';
+          setRvm('MediaPipe OK • ' + mpDelegate, 'Nhãn mặt nạ: ' + JSON.stringify(mpLabels));
+          startMatteLoop();
+          return;
+        } catch (e) {
+          console.warn('MediaPipe lỗi:', e);
+          mpErr = String((e && e.stack) || e);
+          engine = 'rvm';
+        }
+      }
+      selectEngine('rvm');
+      btnEngine.innerText = 'Tách: RVM';
+      await initRVM();
+      if (mpErr && rvmReady) setRvm(rvmStatusText + ' (MediaPipe lỗi)', 'MediaPipe lỗi: ' + mpErr);
     }
 
     function setTier(i) {
@@ -395,16 +504,16 @@
     // Vòng matting chạy riêng, không làm chậm vòng render
     async function matteLoop() {
       while (true) {
-        const ready = occlusionEnabled && rvmReady && !isSwitchingCam && videoEl.readyState >= 2 && videoEl.videoWidth > 0;
+        const ready = occlusionEnabled && engineReady() && !isSwitchingCam && videoEl.readyState >= 2 && videoEl.videoWidth > 0;
         if (ready) {
           try {
             const iterStart = performance.now();
-            await runRVMSegmentation(facingMode === 'user');
+            await (engine === 'mediapipe' ? runMPSegmentation(facingMode === 'user') : runRVMSegmentation(facingMode === 'user'));
             iterTimes.push(performance.now() - iterStart);
             if (iterTimes.length > 8) iterTimes.shift();
             if (tierCooldown > 0) {
               tierCooldown--;
-            } else if (AUTO_TIER && iterTimes.length >= 6) {
+            } else if (AUTO_TIER && engine === 'rvm' && iterTimes.length >= 6) {
               const avg = iterTimes.reduce((x, y) => x + y, 0) / iterTimes.length;
               if (avg > 140 && tier > 0) { tierCeil = tier - 1; setTier(tier - 1); }
               else if (avg < 55 && tier < tierCeil) setTier(tier + 1);
@@ -413,7 +522,7 @@
           } catch (e) {
             console.warn('RVM frame error:', e);
             const msg = ((e && e.name) ? e.name + ': ' : '') + String((e && e.message) || e);
-            if (rvmWorker) {
+            if (engine === 'rvm' && rvmWorker) {
               rvmWorker.terminate(); rvmWorker = null; runResolve = runReject = null;
               try {
                 rvmSession = await ort.InferenceSession.create(rvmModelBytes, { executionProviders: ['wasm'] });
@@ -426,7 +535,7 @@
             setRvm('Run lỗi (chạm để xem)', msg);
             await new Promise((r) => setTimeout(r, 500));
           }
-          await new Promise((r) => setTimeout(r, 0));
+          await new Promise((r) => setTimeout(r, engine === 'mediapipe' ? 10 : 0));
         } else {
           await new Promise((r) => setTimeout(r, 100));
         }
@@ -610,6 +719,26 @@
       applyPose(0);
     });
 
+    btnEngine.addEventListener('click', async () => {
+      if (engineSwitching) return;
+      engineSwitching = true;
+      const next = engine === 'mediapipe' ? 'rvm' : 'mediapipe';
+      try {
+        if (next === 'mediapipe' && !mpReady) await initMP();
+        if (next === 'rvm' && !rvmReady) await initRVM();
+      } catch (e) {
+        setRvm('Không đổi được (chạm để xem)', String((e && e.stack) || e));
+      }
+      if (next === 'mediapipe' ? mpReady : rvmReady) {
+        selectEngine(next);
+        btnEngine.innerText = next === 'mediapipe' ? 'Tách: MediaPipe' : 'Tách: RVM';
+        if (next === 'mediapipe') setRvm('MediaPipe OK • ' + mpDelegate, 'Nhãn mặt nạ: ' + JSON.stringify(mpLabels));
+        else setRvm(rvmWorker ? 'RVM OK • worker' : 'RVM OK • luồng chính');
+        startMatteLoop();
+      }
+      engineSwitching = false;
+    });
+
     // ===== VÒNG RENDER =====
     let lastT = performance.now();
     function loop() {
@@ -652,7 +781,7 @@
 
     resizeFrame();
     startCamera();
-    initRVM();
+    startEngine();
     loop();
   </script>
 </body>
