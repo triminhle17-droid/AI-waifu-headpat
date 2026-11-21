@@ -1,0 +1,549 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no" />
+  <title>WebXR AR + VRM (tay che model)</title>
+  <style>
+    * { box-sizing: border-box; }
+    html, body { margin: 0; height: 100%; background: #0b0b0f; font-family: sans-serif; overflow: hidden; touch-action: none; }
+    #overlay { position: fixed; inset: 0; background: transparent; color: #fff; }
+    #vrm { display: none; }
+    #comp { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
+    .badge, .btn { color: #fff; background: rgba(20,20,28,.8); border-radius: 14px; border: 1px solid rgba(255,255,255,.15); font-size: 12px; }
+    .badge { padding: 6px 12px; line-height: 1.35; }
+    .btn { padding: 9px 12px; font-weight: 600; cursor: pointer; white-space: nowrap; }
+    .btn.active { background: #ff2b55; border-color: #ff2b55; }
+    .btn:disabled { opacity: .45; }
+    #start { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 14px; padding: 24px; text-align: center; background: #0b0b0f; }
+    #start .btn { font-size: 16px; padding: 14px 24px; }
+    #ui { position: absolute; inset: 0; display: none; pointer-events: none; }
+    .xr-on #start { display: none; }
+    .xr-on #ui { display: block; }
+    #top { position: absolute; top: 10px; left: 10px; right: 10px; display: flex; gap: 8px; justify-content: space-between; align-items: flex-start; }
+    #status { max-width: 72%; }
+    #hint { position: absolute; top: 74px; left: 14px; right: 14px; text-align: center; font-size: 13px; line-height: 1.35; text-shadow: 0 1px 3px #000; }
+    #controls { position: absolute; right: 10px; bottom: 80px; display: flex; flex-direction: column; gap: 8px; }
+    #bottom { position: absolute; left: 10px; right: 10px; bottom: 16px; display: flex; gap: 6px; justify-content: center; flex-wrap: wrap; }
+    #top > *, #controls, #bottom { pointer-events: auto; }
+    #dbg { position: absolute; left: 10px; top: 120px; display: none; gap: 6px; }
+    #dbg canvas { width: 72px; height: 128px; border: 1px solid rgba(255,255,255,.6); background: #000; }
+  </style>
+</head>
+<body>
+  <div id="overlay">
+    <canvas id="vrm"></canvas>
+    <canvas id="comp"></canvas>
+    <video id="gumvideo" playsinline muted autoplay style="display:none"></video>
+
+    <div id="start">
+      <h2 style="margin:0">AR sàn + tay che model</h2>
+      <div id="support" class="badge" style="max-width:340px">Đang kiểm tra WebXR...</div>
+      <button id="btn-start" class="btn" disabled>Bắt đầu AR</button>
+      <div class="badge" style="max-width:340px">Android: Chrome (có ARCore). iPhone: ứng dụng WebXR Viewer. Khi bắt đầu, trình duyệt sẽ xin quyền camera.</div>
+      <a class="badge" href="index.html" style="max-width:340px;color:#9cf;text-decoration:none">Muốn tay che model trên iPhone Safari/Firefox? Mở chế độ camera thường (index.html)</a>
+    </div>
+
+    <div id="ui">
+      <div id="top">
+        <span id="status" class="badge">Đang khởi động...</span>
+        <button id="btn-exit" class="btn">Thoát</button>
+      </div>
+      <div id="hint"></div>
+      <div id="dbg"></div>
+      <div id="controls">
+        <button id="btn-occ" class="btn active">Che người: BẬT</button>
+        <button id="btn-expr" class="btn">Biểu cảm: Vui</button>
+        <button id="btn-dbg" class="btn">Debug: TẮT</button>
+        <button id="btn-orient" class="btn">Hướng ảnh: 2/8</button>
+        <button id="btn-gum" class="btn" style="display:none">Thử che tay (thí nghiệm)</button>
+      </div>
+      <div id="bottom">
+        <button id="btn-out" class="btn">Thu nhỏ (-)</button>
+        <button id="btn-in" class="btn">Phóng to (+)</button>
+        <button id="btn-reset" class="btn">Đặt lại</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/GLTFLoader.js"></script>
+  <script src="https://unpkg.com/@pixiv/three-vrm@0.6.8/lib/three-vrm.js"></script>
+
+  <script>
+    // ===== CẤU HÌNH =====
+    const MODEL_URL = 'model.vrm';
+    const MP_MODEL = 'https://storage.googleapis.com/mediapipe-models/image_segmenter/selfie_segmenter/float16/latest/selfie_segmenter.tflite';
+    const MP_BUNDLES = [
+      ['https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/vision_bundle.mjs', 'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm'],
+      ['https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision/vision_bundle.mjs', 'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision/wasm']
+    ];
+    const ALPHA_LO = 0.25, ALPHA_HI = 0.65;  // thu hẹp = viền gắt hơn
+    const MASK_INTERVAL = 66;                // ms giữa 2 lần tách người (~15 lần/giây)
+    const ARM_SIGN = 1;
+
+    const $ = (id) => document.getElementById(id);
+    const overlay = $('overlay'), vrmCanvas = $('vrm'), comp = $('comp'), compCtx = comp.getContext('2d');
+    const statusEl = $('status'), hintEl = $('hint'), dbgEl = $('dbg');
+
+    // ===== THREE (vẽ model vào canvas riêng, rồi ghép + khoét theo mặt nạ) =====
+    const scene = new THREE.Scene();
+    const camera = new THREE.PerspectiveCamera();
+    camera.matrixAutoUpdate = false;
+    const renderer = new THREE.WebGLRenderer({ canvas: vrmCanvas, alpha: true, antialias: true });
+    renderer.setClearColor(0x000000, 0);
+    const dirLight = new THREE.DirectionalLight(0xffffff, 1.15);
+    dirLight.position.set(1, 2, 2);
+    scene.add(dirLight, new THREE.AmbientLight(0xffffff, 0.85));
+
+    const reticle = new THREE.Mesh(
+      new THREE.RingGeometry(0.12, 0.17, 32).rotateX(-Math.PI / 2),
+      new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.85 })
+    );
+    reticle.matrixAutoUpdate = false;
+    reticle.visible = false;
+    scene.add(reticle);
+
+    const blob = new THREE.Mesh(
+      new THREE.CircleGeometry(0.3, 32).rotateX(-Math.PI / 2),
+      new THREE.MeshBasicMaterial({ color: 0x000000, transparent: true, opacity: 0.3, depthWrite: false })
+    );
+    blob.visible = false;
+    scene.add(blob);
+
+    let currentVrm = null, placed = false, modelScale = 0.6;
+    const expressions = [['Vui', 'joy'], ['Cười nham hiểm', 'fun'], ['Ngạc nhiên', 'surprised'], ['Bình thường', 'neutral']];
+    let exprIdx = 0;
+
+    function applyExpression() {
+      if (!currentVrm || !currentVrm.blendShapeProxy) return;
+      const p = currentVrm.blendShapeProxy;
+      expressions.forEach(([, n]) => p.setValue(n, 0));
+      if (expressions[exprIdx][1] !== 'neutral') p.setValue(expressions[exprIdx][1], 1);
+      p.update();
+    }
+
+    function applyPose() {
+      const h = currentVrm.humanoid, N = THREE.VRMSchema.HumanoidBoneName;
+      const l = h.getBoneNode(N.LeftUpperArm), r = h.getBoneNode(N.RightUpperArm);
+      if (l) l.rotation.z = 1.2 * ARM_SIGN;   // hạ tay xuống
+      if (r) r.rotation.z = -1.2 * ARM_SIGN;
+    }
+
+    function applyScale() {
+      if (currentVrm) currentVrm.scene.scale.setScalar(modelScale);
+      blob.scale.setScalar(modelScale / 0.6);
+    }
+
+    new THREE.GLTFLoader().load(MODEL_URL, (gltf) => {
+      THREE.VRM.from(gltf).then((vrm) => {
+        currentVrm = vrm;
+        vrm.scene.visible = false;
+        scene.add(vrm.scene);
+        applyPose(); applyExpression(); applyScale();
+      });
+    }, undefined, () => setStatus('Lỗi tải model.vrm'));
+
+    // ===== MẶT NẠ: camera-access -> MediaPipe -> matte =====
+    const inputCanvas = document.createElement('canvas');
+    const inputCtx = inputCanvas.getContext('2d', { willReadFrequently: true });
+    const matteCanvas = document.createElement('canvas');
+    const matteCtx = matteCanvas.getContext('2d');
+    const smallCanvas = document.createElement('canvas');
+    const smallCtx = smallCanvas.getContext('2d');
+    inputCanvas.width = 144; inputCanvas.height = 256;
+    dbgEl.append(inputCanvas, matteCanvas);
+
+    let matteImg = null, matteFresh = false, occlusionOn = true;
+    let orientK = 1;   // 0..7 = xoay 0/90/180/270 độ, có/không lật ngang
+    try { orientK = Number(localStorage.getItem('orientK') ?? 1) % 8; } catch (_) {}
+
+    function commitMatte(a, w, h) {
+      if (matteCanvas.width !== w || matteCanvas.height !== h) {
+        matteCanvas.width = w; matteCanvas.height = h;
+        matteImg = matteCtx.createImageData(w, h);
+      }
+      const o = matteImg.data;
+      for (let i = 0, n = w * h; i < n; i++) {
+        let v = ((a[i] || 0) - ALPHA_LO) / (ALPHA_HI - ALPHA_LO);
+        v = v <= 0 ? 0 : v >= 1 ? 1 : v * v * (3 - 2 * v);
+        const j = i * 4;
+        o[j] = o[j + 1] = o[j + 2] = 255;
+        o[j + 3] = Math.round(v * 255);
+      }
+      matteCtx.putImageData(matteImg, 0, 0);
+      matteFresh = true;
+    }
+
+    let mpSeg = null, mpReady = false, mpLabels = [], mpLastTs = 0, mpMsg = 'MediaPipe: đang nạp...';
+    async function initMP() {
+      let lastErr;
+      for (const [bundle, wasm] of MP_BUNDLES) {
+        try {
+          const { FilesetResolver, ImageSegmenter } = await import(bundle);
+          const fileset = await FilesetResolver.forVisionTasks(wasm);
+          for (const delegate of ['GPU', 'CPU']) {
+            try {
+              mpSeg = await ImageSegmenter.createFromOptions(fileset, {
+                baseOptions: { modelAssetPath: MP_MODEL, delegate },
+                runningMode: 'VIDEO', outputConfidenceMasks: true, outputCategoryMask: false
+              });
+              mpMsg = 'MediaPipe ' + delegate;
+              break;
+            } catch (e) { lastErr = e; }
+          }
+          if (mpSeg) break;
+        } catch (e) { lastErr = e; }
+      }
+      if (!mpSeg) throw lastErr || new Error('Không nạp được MediaPipe');
+      try { mpLabels = mpSeg.getLabels() || []; } catch (_) {}
+      mpReady = true;
+    }
+    let mpStarted = false;
+    function ensureMP() {
+      if (mpStarted) return;
+      mpStarted = true;
+      initMP().catch((e) => { mpMsg = 'MediaPipe lỗi: ' + String((e && e.message) || e).slice(0, 60); });
+    }
+
+    function runMP() {
+      const ts = Math.max(performance.now(), mpLastTs + 1);
+      mpLastTs = ts;
+      mpSeg.segmentForVideo(inputCanvas, ts, (result) => {
+        const masks = result.confidenceMasks;
+        if (!masks || !masks.length) return;
+        let idx = masks.length === 1 ? 0 : masks.length - 1;
+        const k = mpLabels.findIndex((l) => !/background/i.test(l));
+        if (masks.length > 1 && k >= 0 && k < masks.length) idx = k;
+        const m = masks[idx];
+        commitMatte(m.getAsFloat32Array(), m.width, m.height);
+      });
+      maskCount++;
+    }
+
+    // Vẽ ảnh camera (đã thu nhỏ) vào inputCanvas theo hướng xoay/lật đang chọn, cắt kiểu "cover" như màn hình
+    function drawOriented() {
+      const r = orientK & 3, f = orientK >> 2;
+      const sw = smallCanvas.width, sh = smallCanvas.height;
+      const cw = (r & 1) ? sh : sw, ch = (r & 1) ? sw : sh;
+      const s = Math.max(inputCanvas.width / cw, inputCanvas.height / ch);
+      inputCtx.setTransform(1, 0, 0, 1, 0, 0);
+      inputCtx.clearRect(0, 0, inputCanvas.width, inputCanvas.height);
+      inputCtx.translate(inputCanvas.width / 2, inputCanvas.height / 2);
+      inputCtx.scale(s, s);
+      inputCtx.rotate(r * Math.PI / 2);
+      if (f) inputCtx.scale(-1, 1);
+      inputCtx.drawImage(smallCanvas, -sw / 2, -sh / 2);
+      inputCtx.setTransform(1, 0, 0, 1, 0, 0);
+    }
+
+    // Đọc ảnh camera WebXR: gắn texture vào FBO, blit thu nhỏ trên GPU rồi readPixels (nhỏ, nhanh)
+    let readFbo = null, smallFbo = null, smallTex = null, smallBuf = null, smallImg = null, smallW = 0, smallH = 0, camInfo = '';
+    function grabCamera(view) {
+      const gl = xrGl, cam = view.camera;
+      const tex = glBinding.getCameraImage(cam);
+      if (!tex) { camInfo = 'getCameraImage = null'; return false; }
+      const sw = 256, sh = Math.max(1, Math.round(256 * cam.height / cam.width));
+      camInfo = `cam ${cam.width}x${cam.height}`;
+      if (!readFbo) { readFbo = gl.createFramebuffer(); smallFbo = gl.createFramebuffer(); smallTex = gl.createTexture(); }
+      if (smallW !== sw || smallH !== sh) {
+        gl.bindTexture(gl.TEXTURE_2D, smallTex);
+        gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, sw, sh, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+        gl.bindFramebuffer(gl.FRAMEBUFFER, smallFbo);
+        gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, smallTex, 0);
+        smallBuf = new Uint8Array(sw * sh * 4);
+        smallCanvas.width = sw; smallCanvas.height = sh;
+        smallImg = new ImageData(sw, sh);
+        smallW = sw; smallH = sh;
+      }
+      gl.bindFramebuffer(gl.READ_FRAMEBUFFER, readFbo);
+      gl.framebufferTexture2D(gl.READ_FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, tex, 0);
+      let ok = gl.checkFramebufferStatus(gl.READ_FRAMEBUFFER) === gl.FRAMEBUFFER_COMPLETE;
+      if (ok) {
+        gl.bindFramebuffer(gl.DRAW_FRAMEBUFFER, smallFbo);
+        gl.blitFramebuffer(0, 0, cam.width, cam.height, 0, 0, sw, sh, gl.COLOR_BUFFER_BIT, gl.LINEAR);
+        gl.bindFramebuffer(gl.READ_FRAMEBUFFER, smallFbo);
+        gl.readPixels(0, 0, sw, sh, gl.RGBA, gl.UNSIGNED_BYTE, smallBuf);
+      } else {
+        camInfo += ' • FBO camera không hợp lệ';
+      }
+      gl.bindFramebuffer(gl.READ_FRAMEBUFFER, readFbo);
+      gl.framebufferTexture2D(gl.READ_FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, null, 0);
+      gl.bindFramebuffer(gl.FRAMEBUFFER, xrSession.renderState.baseLayer.framebuffer);
+      if (!ok) return false;
+      smallImg.data.set(smallBuf);
+      smallCtx.putImageData(smallImg, 0, 0);
+      return true;
+    }
+
+    const gumVideo = $('gumvideo');
+    let gumOn = false;
+    function drawVideo() {
+      const vw = gumVideo.videoWidth, vh = gumVideo.videoHeight;
+      if (!vw || !vh) return;
+      const s = Math.max(inputCanvas.width / vw, inputCanvas.height / vh);
+      inputCtx.setTransform(1, 0, 0, 1, 0, 0);
+      inputCtx.clearRect(0, 0, inputCanvas.width, inputCanvas.height);
+      inputCtx.drawImage(gumVideo, (inputCanvas.width - vw * s) / 2, (inputCanvas.height - vh * s) / 2, vw * s, vh * s);
+    }
+
+    let lastMask = 0, maskCount = 0, maskFps = 0, fpsT = performance.now();
+    function updateMask(view, now) {
+      if (!occlusionOn || now - lastMask < MASK_INTERVAL) return;
+      const hasXrCam = !!(glBinding && view.camera);
+      if (!hasXrCam && !(gumOn && gumVideo.readyState >= 2)) return;
+      ensureMP();
+      if (!mpReady) return;
+      lastMask = now;
+      const W = overlay.clientWidth || 360, H = overlay.clientHeight || 800;
+      const rtW = Math.max(96, Math.min(256, Math.round(256 * W / H)));
+      if (inputCanvas.width !== rtW || inputCanvas.height !== 256) { inputCanvas.width = rtW; inputCanvas.height = 256; }
+      if (hasXrCam) { if (!grabCamera(view)) return; drawOriented(); }
+      else drawVideo();
+      runMP();
+    }
+
+    // ===== GHÉP LỚP: model vẽ trước, rồi khoét chỗ có người =====
+    function resizeOverlay() {
+      const w = overlay.clientWidth, h = overlay.clientHeight;
+      if (!w || !h) return;
+      const pr = Math.min(window.devicePixelRatio || 1, 1.5);
+      const pw = Math.round(w * pr), ph = Math.round(h * pr);
+      if (vrmCanvas.width !== pw || vrmCanvas.height !== ph) {
+        renderer.setPixelRatio(1);
+        renderer.setSize(pw, ph, false);
+        comp.width = pw; comp.height = ph;
+      }
+    }
+
+    function compose() {
+      compCtx.globalCompositeOperation = 'source-over';
+      compCtx.clearRect(0, 0, comp.width, comp.height);
+      compCtx.drawImage(vrmCanvas, 0, 0, comp.width, comp.height);
+      if (occlusionOn && matteFresh) {
+        compCtx.globalCompositeOperation = 'destination-out';
+        compCtx.drawImage(matteCanvas, 0, 0, comp.width, comp.height);
+        compCtx.globalCompositeOperation = 'source-over';
+      }
+    }
+
+    // ===== WEBXR =====
+    let xrSession = null, xrGl = null, glBinding = null, refSpace = null, hitSource = null, lastT = 0, hitOk = false, frames = 0, errShown = false;
+    const tmpPos = new THREE.Vector3(), tmpCam = new THREE.Vector3(), fwd = new THREE.Vector3();
+    let glCanvas = null, lastUi = 0, camHinted = false;
+
+    function setStatus(t) { statusEl.textContent = t; }
+    let hintTimer = null;
+    function hint(t, ms = 3000) {
+      hintEl.textContent = t;
+      clearTimeout(hintTimer);
+      if (t && ms > 0) hintTimer = setTimeout(() => { hintEl.textContent = ''; }, ms);
+    }
+
+    function onSelect() {
+      if (performance.now() - lastUi < 500) return;   // vừa chạm vào nút giao diện
+      if (!currentVrm) { hint('Model chưa tải xong.'); return; }
+      if (!reticle.visible) { hint('Chưa thấy sàn. Di chuyển máy chậm quanh mặt sàn rồi chạm lại.'); return; }
+      tmpPos.setFromMatrixPosition(reticle.matrix);
+      tmpCam.setFromMatrixPosition(camera.matrixWorld);
+      currentVrm.scene.position.copy(tmpPos);
+      currentVrm.scene.rotation.set(0, Math.atan2(tmpPos.x - tmpCam.x, tmpPos.z - tmpCam.z), 0); // mặt nhân vật quay về phía máy
+      currentVrm.scene.visible = true;
+      blob.position.set(tmpPos.x, tmpPos.y + 0.004, tmpPos.z);
+      blob.visible = true;
+      placed = true;
+      applyScale();
+      hint('Đã đặt nhân vật! Chạm lần nữa để đặt lại chỗ khác.', 2500);
+    }
+
+    function onXRFrame(t, frame) {
+      if (!xrSession) return;
+      xrSession.requestAnimationFrame(onXRFrame);
+      try {
+        const layer = xrSession.renderState.baseLayer;
+        xrGl.bindFramebuffer(xrGl.FRAMEBUFFER, layer.framebuffer);
+        xrGl.clearColor(0, 0, 0, 0);
+        xrGl.clear(xrGl.COLOR_BUFFER_BIT | xrGl.DEPTH_BUFFER_BIT);
+
+        const pose = frame.getViewerPose(refSpace);
+        if (!pose || !pose.views.length) return;
+        const view = pose.views[0];
+
+        resizeOverlay();
+        camera.projectionMatrix.fromArray(view.projectionMatrix);
+        camera.projectionMatrixInverse.copy(camera.projectionMatrix).invert();
+        camera.matrixWorld.fromArray(view.transform.matrix);
+        camera.matrixWorldInverse.copy(camera.matrixWorld).invert();
+
+        hitOk = false;
+        if (hitSource) {
+          const hits = frame.getHitTestResults(hitSource);
+          if (hits.length) {
+            const hp = hits[0].getPose(refSpace);
+            if (hp) { reticle.matrix.fromArray(hp.transform.matrix); reticle.matrixWorldNeedsUpdate = true; hitOk = true; }
+          }
+        } else {
+          // Không có hit-test: dùng sàn ước lượng, cách máy 1.5m và thấp hơn máy 1.3m
+          const e = view.transform.matrix;
+          fwd.set(-e[8], 0, -e[10]);
+          if (fwd.lengthSq() < 1e-4) fwd.set(0, 0, -1);
+          fwd.normalize();
+          reticle.matrix.makeTranslation(e[12] + fwd.x * 1.5, e[13] - 1.3, e[14] + fwd.z * 1.5);
+          reticle.matrixWorldNeedsUpdate = true;
+          hitOk = true;
+        }
+        reticle.visible = hitOk;
+
+        const dt = lastT ? Math.min(0.05, (t - lastT) / 1000) : 0.016;
+        lastT = t;
+        if (currentVrm) currentVrm.update(dt);
+        renderer.render(scene, camera);
+
+        updateMask(view, performance.now());
+        compose();
+
+        frames++;
+        const now = performance.now();
+        if (now - fpsT >= 1000) {
+          maskFps = Math.round(maskCount * 1000 / (now - fpsT));
+          const fps = Math.round(frames * 1000 / (now - fpsT));
+          maskCount = 0; frames = 0; fpsT = now;
+          const src = view.camera ? 'camera-access' : gumOn ? 'camera phụ' : 'không có ảnh camera';
+          setStatus(`Sàn: ${hitSource ? (hitOk ? 'thấy' : 'đang dò') : 'ước lượng'} • che tay: ${src}${mpStarted ? ' • ' + mpMsg : ''} • mặt nạ ${maskFps}fps • AR ${fps}fps${view.camera ? ' • ' + camInfo : ''}`);
+          if (!view.camera && !gumOn) {
+            $('btn-gum').style.display = '';
+            if (!camHinted) {
+              camHinted = true;
+              hint('Ứng dụng này không cấp ảnh camera (WebXR Viewer trên iPhone không có camera-access) nên tay chưa che được model. Có nút "Thử che tay" để thử cách khác.', 8000);
+            }
+          }
+        }
+      } catch (e) {
+        if (!errShown) { errShown = true; setStatus('Lỗi: ' + String((e && e.message) || e)); console.error(e); }
+      }
+    }
+
+    async function startXR() {
+      const support = $('support');
+      const attempts = [
+        { requiredFeatures: ['hit-test', 'dom-overlay'], optionalFeatures: ['camera-access', 'local-floor'], domOverlay: { root: overlay } },
+        { requiredFeatures: ['hit-test'], optionalFeatures: ['camera-access', 'dom-overlay'], domOverlay: { root: overlay } },
+        { optionalFeatures: ['hit-test', 'camera-access', 'dom-overlay'], domOverlay: { root: overlay } }
+      ];
+      let lastErr;
+      for (const init of attempts) {
+        try { xrSession = await navigator.xr.requestSession('immersive-ar', init); break; } catch (e) { lastErr = e; }
+      }
+      if (!xrSession) {
+        support.textContent = 'Không mở được phiên AR: ' + String((lastErr && lastErr.message) || lastErr);
+        return;
+      }
+      glCanvas = document.createElement('canvas');
+      glCanvas.style.cssText = 'position:absolute;inset:0;width:100%;height:100%;pointer-events:none;';
+      overlay.insertBefore(glCanvas, overlay.firstChild);
+      xrGl = glCanvas.getContext('webgl2', { xrCompatible: true, alpha: true, antialias: false });
+      xrSession.updateRenderState({ baseLayer: new XRWebGLLayer(xrSession, xrGl) });
+      refSpace = await xrSession.requestReferenceSpace('local');
+      hitSource = null;
+      try {
+        if (xrSession.requestHitTestSource) {
+          const viewerSpace = await xrSession.requestReferenceSpace('viewer');
+          hitSource = await xrSession.requestHitTestSource({ space: viewerSpace });
+        }
+      } catch (e) { hitSource = null; }
+      try { glBinding = ('XRWebGLBinding' in window) ? new XRWebGLBinding(xrSession, xrGl) : null; } catch (e) { glBinding = null; }
+      xrSession.addEventListener('select', onSelect);
+      xrSession.addEventListener('end', () => {
+        xrSession = null; hitSource = null; glBinding = null; readFbo = null; smallW = 0;
+        if (glCanvas) { glCanvas.remove(); glCanvas = null; }
+        if (gumVideo.srcObject) { gumVideo.srcObject.getTracks().forEach((t) => t.stop()); gumVideo.srcObject = null; }
+        gumOn = false; camHinted = false; matteFresh = false;
+        $('btn-gum').style.display = 'none';
+        overlay.classList.remove('xr-on');
+        reticle.visible = false;
+      });
+      overlay.classList.add('xr-on');
+      errShown = false; lastT = 0; fpsT = performance.now(); frames = 0; maskCount = 0;
+      hint('Di chuyển máy chậm để quét sàn, thấy vòng trắng thì chạm để đặt nhân vật.', 6000);
+      xrSession.requestAnimationFrame(onXRFrame);
+    }
+
+    async function checkSupport() {
+      const support = $('support'), btn = $('btn-start');
+      if (!navigator.xr) {
+        support.textContent = 'Trình duyệt này không có WebXR. iPhone/Safari không hỗ trợ, hãy dùng Chrome trên Android.';
+        return;
+      }
+      try {
+        const ok = await navigator.xr.isSessionSupported('immersive-ar');
+        support.textContent = ok ? 'Thiết bị hỗ trợ WebXR AR.' : 'Thiết bị/trình duyệt này không hỗ trợ WebXR AR (cần Android + ARCore + Chrome).';
+        btn.disabled = !ok;
+      } catch (e) {
+        support.textContent = 'Không kiểm tra được WebXR: ' + String((e && e.message) || e);
+      }
+    }
+
+    // ===== NÚT =====
+    ['top', 'controls', 'bottom'].forEach((id) => {
+      const el = $(id);
+      el.addEventListener('beforexrselect', (e) => e.preventDefault());
+      el.addEventListener('pointerdown', () => { lastUi = performance.now(); });
+      el.addEventListener('touchstart', () => { lastUi = performance.now(); }, { passive: true });
+    });
+    $('btn-start').addEventListener('click', () => {
+      startXR().catch((e) => {
+        $('support').textContent = 'Lỗi khi mở AR: ' + String((e && e.message) || e);
+        if (xrSession) xrSession.end();
+      });
+    });
+    $('btn-exit').addEventListener('click', () => { if (xrSession) xrSession.end(); });
+    $('btn-occ').addEventListener('click', (e) => {
+      occlusionOn = !occlusionOn;
+      e.target.classList.toggle('active', occlusionOn);
+      e.target.textContent = occlusionOn ? 'Che người: BẬT' : 'Che người: TẮT';
+      if (!occlusionOn) matteFresh = false;
+    });
+    $('btn-expr').addEventListener('click', (e) => {
+      exprIdx = (exprIdx + 1) % expressions.length;
+      e.target.textContent = 'Biểu cảm: ' + expressions[exprIdx][0];
+      applyExpression();
+    });
+    $('btn-dbg').addEventListener('click', (e) => {
+      const on = dbgEl.style.display !== 'flex';
+      dbgEl.style.display = on ? 'flex' : 'none';
+      e.target.textContent = 'Debug: ' + (on ? 'BẬT' : 'TẮT');
+    });
+    $('btn-orient').addEventListener('click', (e) => {
+      orientK = (orientK + 1) % 8;
+      try { localStorage.setItem('orientK', String(orientK)); } catch (_) {}
+      e.target.textContent = `Hướng ảnh: ${orientK + 1}/8`;
+      matteFresh = false;
+    });
+    $('btn-orient').textContent = `Hướng ảnh: ${orientK + 1}/8`;
+    $('btn-gum').addEventListener('click', async (e) => {
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment', width: { ideal: 640 }, height: { ideal: 480 } }, audio: false });
+        gumVideo.srcObject = stream;
+        await gumVideo.play();
+        gumOn = true;
+        e.target.style.display = 'none';
+        hint('Đã mở camera phụ. Nếu AR bị đứng hoặc mất hình thì bấm Thoát và vào lại, không dùng nút này.', 6000);
+      } catch (err) {
+        hint('Không mở được camera phụ: ' + String((err && err.message) || err), 6000);
+      }
+    });
+    $('btn-in').addEventListener('click', () => { modelScale = Math.min(2, +(modelScale + 0.1).toFixed(2)); applyScale(); });
+    $('btn-out').addEventListener('click', () => { modelScale = Math.max(0.2, +(modelScale - 0.1).toFixed(2)); applyScale(); });
+    $('btn-reset').addEventListener('click', () => {
+      placed = false; blob.visible = false;
+      if (currentVrm) currentVrm.scene.visible = false;
+      modelScale = 0.6; applyScale();
+      hint('Chạm để đặt lại nhân vật.', 2500);
+    });
+
+    checkSupport();
+  </script>
+</body>
+</html>
