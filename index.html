@@ -31,7 +31,7 @@
   <div id="filter-frame">
     <div id="top-bar">
       <span id="status" class="badge">Khởi tạo...</span>
-      <span class="badge">RVM + VRM Filter v9</span>
+      <span class="badge">RVM + VRM Filter v10</span>
     </div>
 
     <div id="hint"></div>
@@ -49,6 +49,7 @@
       <button id="btn-engine" class="btn">Tách: MediaPipe</button>
       <button id="btn-ar" class="btn">AR sàn: TẮT</button>
       <button id="btn-height" class="btn" style="display:none">Độ cao máy: 1.4m</button>
+      <button id="btn-track" class="btn active" style="display:none">Theo dõi vị trí: BẬT</button>
     </div>
 
     <div id="bottom-bar">
@@ -117,6 +118,7 @@
     const btnEngine = document.getElementById('btn-engine');
     const btnAr = document.getElementById('btn-ar');
     const btnHeight = document.getElementById('btn-height');
+    const btnTrack = document.getElementById('btn-track');
     const btnUi = document.getElementById('btn-ui');
     const hintEl = document.getElementById('hint');
 
@@ -149,7 +151,7 @@
       const extra = !engineReady() || !maskFps ? '' : engine === 'rvm'
         ? ` • mặt nạ ${maskFps}fps • AI ${aiMs}ms • ${RVM_H}p • UI ${uiFps}fps`
         : ` • mặt nạ ${maskFps}fps • UI ${uiFps}fps`;
-      statusEl.innerText = `${camLabel} • ${rvmStatusText}${extra}`;
+      statusEl.innerText = `${camLabel} • ${rvmStatusText}${extra}${arMode && trackOn ? ' • đi: ' + trackInfo : ''}`;
     }
     // Chạm vào thanh trạng thái để xem lỗi đầy đủ
     statusEl.addEventListener('click', () => { if (rvmFullMsg) alert(rvmFullMsg); });
@@ -621,17 +623,102 @@
       arLastEvt = performance.now();
     }
 
+    // ===== THEO DÕI VỊ TRÍ BẰNG CAMERA (thử nghiệm) =====
+    // Con quay chỉ cho biết máy XOAY thế nào. Ở đây ước lượng thêm việc máy DỊCH CHUYỂN: dò các điểm trên sàn giữa hai khung hình.
+    // Biết độ cao máy và hướng xoay thì mỗi điểm sàn cho ra một ước lượng độ dịch ngang của máy; lấy trung vị cho ổn định.
+    const TRACK_W = 120, TRACK_INTERVAL = 50, TP = 3, TS = 6, TCX = 8, TCY = 10;
+    const trackCanvas = document.createElement('canvas');
+    const trackCtx = trackCanvas.getContext('2d', { willReadFrequently: true });
+    let trackOn = true, trackPrev = null, trackPrevT = 0, trackInfo = '...', arCamX = 0, arCamZ = 0;
+    const trackPrevQ = new THREE.Quaternion(), trackV = new THREE.Vector3();
+    const estX = [], estZ = [];
+
+    function median(a) { a.sort((x, y) => x - y); return a[a.length >> 1]; }
+
+    function onPerson(bx, by, gw, gh) {
+      if (!matteFresh || !matteImgData) return false;
+      const mw = matteCanvas.width, mh = matteCanvas.height;
+      const mx = Math.min(mw - 1, Math.floor(bx / gw * mw)), my = Math.min(mh - 1, Math.floor(by / gh * mh));
+      return matteImgData.data[(my * mw + mx) * 4 + 3] > 60;   // điểm nằm trên người/tay thì bỏ
+    }
+
+    function estimateShift(prev, cur, gw, gh, qa, qb) {
+      const h = arCamHeight();
+      const tanV = Math.tan(AR_FOV * Math.PI / 360), tanH = tanV * gw / gh;
+      const m = TP + TS + 1;
+      const cw = (gw - 2 * m) / TCX, ch = (gh - 2 * m) / TCY;
+      estX.length = 0; estZ.length = 0;
+      for (let cy = 0; cy < TCY; cy++) for (let cx = 0; cx < TCX; cx++) {
+        // điểm nhiều chi tiết nhất trong ô
+        const x0 = Math.floor(m + cx * cw), y0 = Math.floor(m + cy * ch);
+        let bx = -1, by = -1, bs = 0;
+        for (let y = y0; y < y0 + ch; y += 2) for (let x = x0; x < x0 + cw; x += 2) {
+          const i = y * gw + x;
+          const sc = Math.abs(prev[i + 1] - prev[i - 1]) + Math.abs(prev[i + gw] - prev[i - gw]);
+          if (sc > bs) { bs = sc; bx = x; by = y; }
+        }
+        if (bs < 24 || onPerson(bx, by, gw, gh)) continue;
+        // khớp mẫu 7x7 trong cửa sổ ±TS
+        let best = 1e9, bdx = 0, bdy = 0, sum = 0, cnt = 0;
+        for (let dy = -TS; dy <= TS; dy++) for (let dx = -TS; dx <= TS; dx++) {
+          let sad = 0;
+          for (let yy = -TP; yy <= TP; yy++) {
+            const ro = (by + yy) * gw + bx, rc = (by + yy + dy) * gw + bx + dx;
+            for (let xx = -TP; xx <= TP; xx++) sad += Math.abs(prev[ro + xx] - cur[rc + xx]);
+          }
+          sum += sad; cnt++;
+          if (sad < best) { best = sad; bdx = dx; bdy = dy; }
+        }
+        if (best > (sum / cnt) * 0.45) continue;   // khớp mơ hồ thì bỏ
+        // tia nhìn (hệ thế giới) trước và sau, rồi giao với mặt sàn
+        trackV.set(((bx + 0.5) / gw * 2 - 1) * tanH, (1 - (by + 0.5) / gh * 2) * tanV, -1).applyQuaternion(qa);
+        const ax = trackV.x, ay = trackV.y, az = trackV.z;
+        trackV.set(((bx + bdx + 0.5) / gw * 2 - 1) * tanH, (1 - (by + bdy + 0.5) / gh * 2) * tanV, -1).applyQuaternion(qb);
+        if (ay > -0.2 || trackV.y > -0.2) continue;   // chỉ lấy điểm nằm dưới đường chân trời (sàn)
+        const la = -h / ay, lb = -h / trackV.y;
+        estX.push(la * ax - lb * trackV.x);
+        estZ.push(la * az - lb * trackV.z);
+      }
+      trackInfo = estX.length + ' điểm';
+      if (estX.length < 10) return;
+      let mx = median(estX), mz = median(estZ);
+      const mag = Math.hypot(mx, mz);
+      if (mag < 0.002 || mag > 0.15) return;       // bỏ nhiễu nhỏ và bước nhảy bất thường
+      arCamX += mx; arCamZ += mz;
+    }
+
+    function trackTick(now) {
+      if (!arMode || !trackOn || !arLastEvt || videoEl.readyState < 2 || !videoEl.videoWidth) return;
+      if (now - trackPrevT < TRACK_INTERVAL) return;
+      const W = camCanvas.width, H = camCanvas.height;
+      if (!W || !H) return;
+      const gw = TRACK_W, gh = Math.max(40, Math.round(TRACK_W * H / W));
+      if (trackCanvas.width !== gw || trackCanvas.height !== gh) { trackCanvas.width = gw; trackCanvas.height = gh; trackPrev = null; }
+      drawCover(trackCtx, videoEl, gw, gh, false);
+      const rgba = trackCtx.getImageData(0, 0, gw, gh).data;
+      const gray = new Uint8Array(gw * gh);
+      for (let i = 0, j = 0; i < gray.length; i++, j += 4) gray[i] = (rgba[j] * 77 + rgba[j + 1] * 150 + rgba[j + 2] * 29) >> 8;
+      const qNow = arTarget.clone();
+      const dt = (now - trackPrevT) / 1000;
+      if (trackPrev) {
+        const ang = 2 * Math.acos(Math.min(1, Math.abs(trackPrevQ.dot(qNow)))) * 180 / Math.PI;
+        if (dt < 0.3 && ang / Math.max(dt, 0.001) < 30) estimateShift(trackPrev, gray, gw, gh, trackPrevQ, qNow);
+        else trackInfo = 'đang xoay nhanh';
+      }
+      trackPrev = gray; trackPrevQ.copy(qNow); trackPrevT = now;
+    }
+
     function updateAr() {
       if (!arMode) return;
       if (arSnap && arLastEvt) { camera.quaternion.copy(arTarget); arSnap = false; }
       else camera.quaternion.slerp(arTarget, 0.35);
       const h = arCamHeight();
-      camera.position.set(0, h, 0);
+      camera.position.set(arCamX, h, arCamZ);
       // Tia từ tâm màn hình cắt mặt sàn (y = 0)
       camera.getWorldDirection(arDir);
       const t = arDir.y < -0.05 ? h / -arDir.y : Infinity;
       if (t <= 8) {
-        reticle.position.set(arDir.x * t, 0.003, arDir.z * t);
+        reticle.position.set(arCamX + arDir.x * t, 0.003, arCamZ + arDir.z * t);
         reticle.visible = true;
       } else {
         reticle.visible = false;
@@ -644,7 +731,7 @@
       if (!arMode || !currentVrm) return;
       if (!reticle.visible) { hint('Hướng máy xuống sàn nhà cho tới khi thấy vòng trắng, rồi chạm lại.', 3000); return; }
       arPos.set(reticle.position.x, 0, reticle.position.z);
-      arYaw = Math.atan2(arPos.x, arPos.z);   // quay mặt nhân vật về phía camera
+      arYaw = Math.atan2(arPos.x - arCamX, arPos.z - arCamZ);   // quay mặt nhân vật về phía camera
       arPlaced = true;
       applyModelTransform();
       hint('Đã đặt nhân vật! Chạm lần nữa để đặt lại chỗ khác.', 2500);
@@ -664,6 +751,7 @@
         }
         window.addEventListener('deviceorientation', onDeviceOrientation, true);
         arAlpha0 = null; arLastEvt = 0; arSnap = true;
+        arCamX = 0; arCamZ = 0; trackPrev = null; trackInfo = '...';
         arMode = true; arPlaced = false;
         savedScale = modelScale; modelScale = 0.6;
         if (facingMode !== 'environment') {
@@ -673,6 +761,7 @@
         }
         camera.fov = AR_FOV; camera.updateProjectionMatrix();
         btnHeight.style.display = '';
+        btnTrack.style.display = '';
         btnAr.classList.add('active'); btnAr.innerText = 'AR sàn: BẬT';
         hint('Hướng máy xuống sàn, thấy vòng trắng thì chạm màn hình để đặt nhân vật.', 0);
         setTimeout(() => {
@@ -686,6 +775,7 @@
         camera.fov = 45; camera.position.set(0, 1.35, 1.9); camera.quaternion.identity(); camera.updateProjectionMatrix();
         if (currentVrm) currentVrm.scene.visible = true;
         btnHeight.style.display = 'none';
+        btnTrack.style.display = 'none';
         btnAr.classList.remove('active'); btnAr.innerText = 'AR sàn: TẮT';
         hint('');
       }
@@ -865,6 +955,13 @@
 
     btnAr.addEventListener('click', () => setAR(!arMode));
 
+    btnTrack.addEventListener('click', () => {
+      trackOn = !trackOn;
+      trackPrev = null;
+      btnTrack.classList.toggle('active', trackOn);
+      btnTrack.textContent = 'Theo dõi vị trí: ' + (trackOn ? 'BẬT' : 'TẮT');
+    });
+
     btnHeight.addEventListener('click', () => {
       arHeightIdx = (arHeightIdx + 1) % AR_HEIGHTS.length;
       btnHeight.innerText = `Độ cao máy: ${arCamHeight().toFixed(1)}m`;
@@ -933,6 +1030,7 @@
         currentVrm.update(dt);
       }
 
+      trackTick(now);
       updateAr();
       renderer.render(scene, camera);
       requestAnimationFrame(loop);
