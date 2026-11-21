@@ -8,6 +8,7 @@
     * { box-sizing: border-box; }
     html, body { margin: 0; height: 100%; background: #0b0b0f; font-family: sans-serif; overflow: hidden; touch-action: none; }
     #overlay { position: fixed; inset: 0; background: transparent; color: #fff; }
+    html.xr-active, html.xr-active body { background: transparent !important; }
     #vrm { display: none; }
     #comp { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
     .badge, .btn { color: #fff; background: rgba(20,20,28,.8); border-radius: 14px; border: 1px solid rgba(255,255,255,.15); font-size: 12px; }
@@ -34,10 +35,9 @@
   <div id="overlay">
     <canvas id="vrm"></canvas>
     <canvas id="comp"></canvas>
-    <video id="gumvideo" playsinline muted autoplay style="display:none"></video>
 
     <div id="start">
-      <h2 style="margin:0">AR sàn + tay che model</h2>
+      <h2 style="margin:0">AR sàn + tay che model (v2)</h2>
       <div id="support" class="badge" style="max-width:340px">Đang kiểm tra WebXR...</div>
       <button id="btn-start" class="btn" disabled>Bắt đầu AR</button>
       <div class="badge" style="max-width:340px">Android: Chrome (có ARCore). iPhone: ứng dụng WebXR Viewer. Khi bắt đầu, trình duyệt sẽ xin quyền camera.</div>
@@ -56,7 +56,6 @@
         <button id="btn-expr" class="btn">Biểu cảm: Vui</button>
         <button id="btn-dbg" class="btn">Debug: TẮT</button>
         <button id="btn-orient" class="btn">Hướng ảnh: 2/8</button>
-        <button id="btn-gum" class="btn" style="display:none">Thử che tay (thí nghiệm)</button>
       </div>
       <div id="bottom">
         <button id="btn-out" class="btn">Thu nhỏ (-)</button>
@@ -278,30 +277,18 @@
       return true;
     }
 
-    const gumVideo = $('gumvideo');
-    let gumOn = false;
-    function drawVideo() {
-      const vw = gumVideo.videoWidth, vh = gumVideo.videoHeight;
-      if (!vw || !vh) return;
-      const s = Math.max(inputCanvas.width / vw, inputCanvas.height / vh);
-      inputCtx.setTransform(1, 0, 0, 1, 0, 0);
-      inputCtx.clearRect(0, 0, inputCanvas.width, inputCanvas.height);
-      inputCtx.drawImage(gumVideo, (inputCanvas.width - vw * s) / 2, (inputCanvas.height - vh * s) / 2, vw * s, vh * s);
-    }
-
     let lastMask = 0, maskCount = 0, maskFps = 0, fpsT = performance.now();
     function updateMask(view, now) {
       if (!occlusionOn || now - lastMask < MASK_INTERVAL) return;
-      const hasXrCam = !!(glBinding && view.camera);
-      if (!hasXrCam && !(gumOn && gumVideo.readyState >= 2)) return;
+      if (!(glBinding && view.camera)) return;
       ensureMP();
       if (!mpReady) return;
       lastMask = now;
       const W = overlay.clientWidth || 360, H = overlay.clientHeight || 800;
       const rtW = Math.max(96, Math.min(256, Math.round(256 * W / H)));
       if (inputCanvas.width !== rtW || inputCanvas.height !== 256) { inputCanvas.width = rtW; inputCanvas.height = 256; }
-      if (hasXrCam) { if (!grabCamera(view)) return; drawOriented(); }
-      else drawVideo();
+      if (!grabCamera(view)) return;
+      drawOriented();
       runMP();
     }
 
@@ -410,14 +397,11 @@
           maskFps = Math.round(maskCount * 1000 / (now - fpsT));
           const fps = Math.round(frames * 1000 / (now - fpsT));
           maskCount = 0; frames = 0; fpsT = now;
-          const src = view.camera ? 'camera-access' : gumOn ? 'camera phụ' : 'không có ảnh camera';
+          const src = view.camera ? 'camera-access' : 'không có ảnh camera';
           setStatus(`Sàn: ${hitSource ? (hitOk ? 'thấy' : 'đang dò') : 'ước lượng'} • che tay: ${src}${mpStarted ? ' • ' + mpMsg : ''} • mặt nạ ${maskFps}fps • AR ${fps}fps${view.camera ? ' • ' + camInfo : ''}`);
-          if (!view.camera && !gumOn) {
-            $('btn-gum').style.display = '';
-            if (!camHinted) {
-              camHinted = true;
-              hint('Ứng dụng này không cấp ảnh camera (WebXR Viewer trên iPhone không có camera-access) nên tay chưa che được model. Có nút "Thử che tay" để thử cách khác.', 8000);
-            }
+          if (!view.camera && !camHinted) {
+            camHinted = true;
+            hint('Ứng dụng này không cấp ảnh camera (WebXR Viewer trên iPhone không có camera-access) nên tay chưa che được model, nhưng model vẫn đứng yên trên sàn.', 8000);
           }
         }
       } catch (e) {
@@ -458,13 +442,13 @@
       xrSession.addEventListener('end', () => {
         xrSession = null; hitSource = null; glBinding = null; readFbo = null; smallW = 0;
         if (glCanvas) { glCanvas.remove(); glCanvas = null; }
-        if (gumVideo.srcObject) { gumVideo.srcObject.getTracks().forEach((t) => t.stop()); gumVideo.srcObject = null; }
-        gumOn = false; camHinted = false; matteFresh = false;
-        $('btn-gum').style.display = 'none';
+        camHinted = false; matteFresh = false;
+        document.documentElement.classList.remove('xr-active');
         overlay.classList.remove('xr-on');
         reticle.visible = false;
       });
       overlay.classList.add('xr-on');
+      document.documentElement.classList.add('xr-active');
       errShown = false; lastT = 0; fpsT = performance.now(); frames = 0; maskCount = 0;
       hint('Di chuyển máy chậm để quét sàn, thấy vòng trắng thì chạm để đặt nhân vật.', 6000);
       xrSession.requestAnimationFrame(onXRFrame);
@@ -522,18 +506,6 @@
       matteFresh = false;
     });
     $('btn-orient').textContent = `Hướng ảnh: ${orientK + 1}/8`;
-    $('btn-gum').addEventListener('click', async (e) => {
-      try {
-        const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment', width: { ideal: 640 }, height: { ideal: 480 } }, audio: false });
-        gumVideo.srcObject = stream;
-        await gumVideo.play();
-        gumOn = true;
-        e.target.style.display = 'none';
-        hint('Đã mở camera phụ. Nếu AR bị đứng hoặc mất hình thì bấm Thoát và vào lại, không dùng nút này.', 6000);
-      } catch (err) {
-        hint('Không mở được camera phụ: ' + String((err && err.message) || err), 6000);
-      }
-    });
     $('btn-in').addEventListener('click', () => { modelScale = Math.min(2, +(modelScale + 0.1).toFixed(2)); applyScale(); });
     $('btn-out').addEventListener('click', () => { modelScale = Math.max(0.2, +(modelScale - 0.1).toFixed(2)); applyScale(); });
     $('btn-reset').addEventListener('click', () => {
