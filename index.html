@@ -31,7 +31,7 @@
   <div id="filter-frame">
     <div id="top-bar">
       <span id="status" class="badge">Khởi tạo...</span>
-      <span class="badge">RVM + VRM Filter v10</span>
+      <span class="badge">RVM + VRM Filter v11</span>
     </div>
 
     <div id="hint"></div>
@@ -46,7 +46,7 @@
       <button id="btn-drag-mode" class="btn">Kéo: Trái/Phải/Lên/Xuống</button>
       <button id="btn-expr" class="btn">Biểu cảm: Vui</button>
       <button id="btn-pose" class="btn">Tư thế: Đứng thẳng</button>
-      <button id="btn-engine" class="btn">Tách: MediaPipe</button>
+      <button id="btn-engine" class="btn">Tách: Tay</button>
       <button id="btn-ar" class="btn">AR sàn: TẮT</button>
       <button id="btn-height" class="btn" style="display:none">Độ cao máy: 1.4m</button>
       <button id="btn-track" class="btn active" style="display:none">Theo dõi vị trí: BẬT</button>
@@ -74,7 +74,11 @@
     const RVM_TIERS = [[108, 192, 0.8], [144, 256, 0.6], [180, 320, 0.5], [216, 384, 0.5], [270, 480, 0.4]];
     const AUTO_TIER = true;          // đổi false để cố định mức
     const RENDER_FPS_CAP = 30;       // giới hạn FPS vẽ để nhường CPU cho nhận diện
-    const DEFAULT_ENGINE = 'mediapipe'; // 'mediapipe' = chạy GPU, nhanh. 'rvm' = viền đẹp hơn nhưng nặng
+    const DEFAULT_ENGINE = 'hand';      // 'hand' = nhận bàn tay (hợp xoa đầu), 'mediapipe' = tách cả người, 'rvm' = viền đẹp nhưng nặng
+    const HAND_MODEL = 'https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task';
+    const HAND_W = 216, HAND_H = 384;   // ảnh đưa vào bộ nhận tay (9:16)
+    const ENGINES = ['hand', 'mediapipe', 'rvm'];
+    const ENGINE_LABEL = { hand: 'Tách: Tay', mediapipe: 'Tách: Người', rvm: 'Tách: RVM' };
     const MP_W = 144, MP_H = 256;       // ảnh đưa vào MediaPipe (9:16)
     const MP_MODEL = 'https://storage.googleapis.com/mediapipe-models/image_segmenter/selfie_segmenter/float16/latest/selfie_segmenter.tflite';
     const MP_BUNDLES = [
@@ -131,6 +135,7 @@
     let rvmSession = null;
     let rvmWorker = null;
     let rvmModelBytes = null;
+    let handLm = null, handReady = false, handDelegate = '', mpMod = null, mpFileset = null;
     let mpSegmenter = null, mpReady = false, mpDelegate = '', mpLabels = [], mpLastTs = 0, engineSwitching = false, matteLoopStarted = false;
     let rvmReady = false;
     let rvmStatusText = 'Đang nạp RVM...';
@@ -151,7 +156,7 @@
       const extra = !engineReady() || !maskFps ? '' : engine === 'rvm'
         ? ` • mặt nạ ${maskFps}fps • AI ${aiMs}ms • ${RVM_H}p • UI ${uiFps}fps`
         : ` • mặt nạ ${maskFps}fps • UI ${uiFps}fps`;
-      statusEl.innerText = `${camLabel} • ${rvmStatusText}${extra}${arMode && trackOn ? ' • đi: ' + trackInfo : ''}`;
+      statusEl.innerText = `${camLabel} • ${rvmStatusText}${extra}${arMode ? (performance.now() - arLastEvt < 1500 ? ' • cảm biến OK' : ' • KHÔNG có cảm biến (hãy mở bằng Safari)') : ''}${arMode && trackOn ? ' • đi: ' + trackInfo : ''}`;
     }
     // Chạm vào thanh trạng thái để xem lỗi đầy đủ
     statusEl.addEventListener('click', () => { if (rvmFullMsg) alert(rvmFullMsg); });
@@ -406,7 +411,83 @@
       commitMatte(alphaData, RVM_W, RVM_H);
     }
 
-    function engineReady() { return engine === 'mediapipe' ? mpReady : rvmReady; }
+    function engineReady() { return engine === 'mediapipe' ? mpReady : engine === 'hand' ? handReady : rvmReady; }
+
+    // ===== Bộ nhận tay (MediaPipe Hand Landmarker): dựng mặt nạ từ 21 điểm của bàn tay + cẳng tay =====
+    async function getMPFileset() {
+      if (mpFileset) return;
+      let lastErr;
+      for (const [bundleUrl, wasmUrl] of MP_BUNDLES) {
+        try {
+          mpMod = await import(bundleUrl);
+          mpFileset = await mpMod.FilesetResolver.forVisionTasks(wasmUrl);
+          return;
+        } catch (e) { lastErr = e; }
+      }
+      throw lastErr || new Error('Không nạp được MediaPipe');
+    }
+
+    async function initHand() {
+      setRvm('Đang nạp bộ nhận tay...');
+      await getMPFileset();
+      let lastErr;
+      for (const delegate of ['GPU', 'CPU']) {
+        try {
+          handLm = await mpMod.HandLandmarker.createFromOptions(mpFileset, {
+            baseOptions: { modelAssetPath: HAND_MODEL, delegate },
+            runningMode: 'VIDEO', numHands: 2
+          });
+          handDelegate = delegate;
+          handReady = true;
+          return;
+        } catch (e) { lastErr = e; }
+      }
+      throw lastErr || new Error('Không nạp được bộ nhận tay');
+    }
+
+    function drawHandMask(hands) {
+      const w = RVM_W, h = RVM_H;
+      if (matteCanvas.width !== w || matteCanvas.height !== h) { matteCanvas.width = w; matteCanvas.height = h; }
+      const c = matteCtx;
+      c.clearRect(0, 0, w, h);
+      c.fillStyle = c.strokeStyle = '#fff';
+      c.lineCap = c.lineJoin = 'round';
+      for (const lm of hands) {
+        const P = lm.map((p) => [p.x * w, p.y * h]);
+        const d = (a, b) => Math.hypot(P[a][0] - P[b][0], P[a][1] - P[b][1]);
+        const palm = d(0, 9);
+        const thick = Math.max(4, palm * 0.36);
+        // lòng bàn tay
+        c.beginPath();
+        [0, 1, 5, 9, 13, 17].forEach((i, k) => (k ? c.lineTo(P[i][0], P[i][1]) : c.moveTo(P[i][0], P[i][1])));
+        c.closePath(); c.fill();
+        c.lineWidth = thick; c.stroke();
+        // các ngón
+        for (const f of [[1, 2, 3, 4], [5, 6, 7, 8], [9, 10, 11, 12], [13, 14, 15, 16], [17, 18, 19, 20]]) {
+          c.beginPath(); c.moveTo(P[f[0]][0], P[f[0]][1]);
+          for (let k = 1; k < f.length; k++) c.lineTo(P[f[k]][0], P[f[k]][1]);
+          c.stroke();
+        }
+        // cổ tay và một đoạn cẳng tay kéo dài ra sau
+        const mx = (P[5][0] + P[9][0] + P[13][0] + P[17][0]) / 4, my = (P[5][1] + P[9][1] + P[13][1] + P[17][1]) / 4;
+        const dx = P[0][0] - mx, dy = P[0][1] - my, len = Math.hypot(dx, dy) || 1;
+        c.lineWidth = Math.max(5, d(5, 17) * 1.2);
+        c.beginPath(); c.moveTo(P[0][0], P[0][1]);
+        c.lineTo(P[0][0] + dx / len * palm * 2.4, P[0][1] + dy / len * palm * 2.4);
+        c.stroke();
+      }
+      matteImgData = c.getImageData(0, 0, w, h);   // để phần theo dõi sàn biết chỗ nào là tay
+      matteFresh = true;
+    }
+
+    function runHandSegmentation(isMirror) {
+      rvmInputCtx.clearRect(0, 0, RVM_W, RVM_H);
+      drawCover(rvmInputCtx, videoEl, RVM_W, RVM_H, isMirror);
+      const ts = Math.max(performance.now(), mpLastTs + 1);
+      mpLastTs = ts;
+      const res = handLm.detectForVideo(rvmInputCanvas, ts);
+      drawHandMask((res && res.landmarks) || []);
+    }
 
     function startMatteLoop() {
       if (matteLoopStarted) return;
@@ -479,9 +560,9 @@
 
     function selectEngine(name) {
       engine = name;
-      if (name === 'mediapipe') {
-        RVM_W = MP_W; RVM_H = MP_H;
-        rvmInputCanvas.width = MP_W; rvmInputCanvas.height = MP_H;
+      if (name === 'mediapipe' || name === 'hand') {
+        RVM_W = name === 'hand' ? HAND_W : MP_W; RVM_H = name === 'hand' ? HAND_H : MP_H;
+        rvmInputCanvas.width = RVM_W; rvmInputCanvas.height = RVM_H;
       } else {
         setTier(tier);
       }
@@ -490,26 +571,32 @@
       resetRecurrentStates();
     }
 
+    function engineStatus(name) {
+      if (name === 'hand') return ['Bộ nhận tay OK • ' + handDelegate, ''];
+      if (name === 'mediapipe') return ['MediaPipe OK • ' + mpDelegate, 'Nhãn mặt nạ: ' + JSON.stringify(mpLabels)];
+      return [rvmWorker ? 'RVM OK • worker' : 'RVM OK • luồng chính', ''];
+    }
+
     async function startEngine() {
-      let mpErr = '';
-      if (engine === 'mediapipe') {
+      const order = [DEFAULT_ENGINE, ...ENGINES.filter((e) => e !== DEFAULT_ENGINE)];
+      const errs = [];
+      for (const name of order) {
         try {
-          await initMP();
-          selectEngine('mediapipe');
-          btnEngine.innerText = 'Tách: MediaPipe';
-          setRvm('MediaPipe OK • ' + mpDelegate, 'Nhãn mặt nạ: ' + JSON.stringify(mpLabels));
+          if (name === 'hand') await initHand();
+          else if (name === 'mediapipe') await initMP();
+          else { selectEngine('rvm'); await initRVM(); if (!rvmReady) throw new Error('RVM không nạp được'); }
+          selectEngine(name);
+          btnEngine.innerText = ENGINE_LABEL[name];
+          const [t, full] = engineStatus(name);
+          setRvm(t, errs.length ? 'Đã bỏ qua: ' + errs.join(' | ') : full);
           startMatteLoop();
           return;
         } catch (e) {
-          console.warn('MediaPipe lỗi:', e);
-          mpErr = String((e && e.stack) || e);
-          engine = 'rvm';
+          console.warn(name + ' lỗi:', e);
+          errs.push(name + ': ' + String((e && e.message) || e));
         }
       }
-      selectEngine('rvm');
-      btnEngine.innerText = 'Tách: RVM';
-      await initRVM();
-      if (mpErr && rvmReady) setRvm(rvmStatusText + ' (MediaPipe lỗi)', 'MediaPipe lỗi: ' + mpErr);
+      setRvm('Không nạp được bộ tách nào (chạm để xem)', errs.join('\n'));
     }
 
     function setTier(i) {
@@ -529,7 +616,8 @@
         if (ready) {
           try {
             const iterStart = performance.now();
-            await (engine === 'mediapipe' ? runMPSegmentation(facingMode === 'user') : runRVMSegmentation(facingMode === 'user'));
+            const mir = facingMode === 'user';
+            await (engine === 'hand' ? runHandSegmentation(mir) : engine === 'mediapipe' ? runMPSegmentation(mir) : runRVMSegmentation(mir));
             iterTimes.push(performance.now() - iterStart);
             if (iterTimes.length > 8) iterTimes.shift();
             if (tierCooldown > 0) {
@@ -556,7 +644,7 @@
             setRvm('Run lỗi (chạm để xem)', msg);
             await new Promise((r) => setTimeout(r, 500));
           }
-          await new Promise((r) => setTimeout(r, engine === 'mediapipe' ? 10 : 0));
+          await new Promise((r) => setTimeout(r, engine !== 'rvm' ? 10 : 0));
         } else {
           await new Promise((r) => setTimeout(r, 100));
         }
@@ -729,6 +817,7 @@
 
     function placeAtReticle() {
       if (!arMode || !currentVrm) return;
+      if (!arLastEvt) { hint('Trình duyệt này không đưa dữ liệu cảm biến cho trang (Firefox / WebXR Viewer), nên model không thể đứng yên trên sàn. Hãy mở bằng Safari.', 6000); return; }
       if (!reticle.visible) { hint('Hướng máy xuống sàn nhà cho tới khi thấy vòng trắng, rồi chạm lại.', 3000); return; }
       arPos.set(reticle.position.x, 0, reticle.position.z);
       arYaw = Math.atan2(arPos.x - arCamX, arPos.z - arCamZ);   // quay mặt nhân vật về phía camera
@@ -977,18 +1066,20 @@
     btnEngine.addEventListener('click', async () => {
       if (engineSwitching) return;
       engineSwitching = true;
-      const next = engine === 'mediapipe' ? 'rvm' : 'mediapipe';
+      const next = ENGINES[(ENGINES.indexOf(engine) + 1) % ENGINES.length];
       try {
+        if (next === 'hand' && !handReady) await initHand();
         if (next === 'mediapipe' && !mpReady) await initMP();
         if (next === 'rvm' && !rvmReady) await initRVM();
       } catch (e) {
         setRvm('Không đổi được (chạm để xem)', String((e && e.stack) || e));
       }
-      if (next === 'mediapipe' ? mpReady : rvmReady) {
+      const ok = next === 'hand' ? handReady : next === 'mediapipe' ? mpReady : rvmReady;
+      if (ok) {
         selectEngine(next);
-        btnEngine.innerText = next === 'mediapipe' ? 'Tách: MediaPipe' : 'Tách: RVM';
-        if (next === 'mediapipe') setRvm('MediaPipe OK • ' + mpDelegate, 'Nhãn mặt nạ: ' + JSON.stringify(mpLabels));
-        else setRvm(rvmWorker ? 'RVM OK • worker' : 'RVM OK • luồng chính');
+        btnEngine.innerText = ENGINE_LABEL[next];
+        const [t, full] = engineStatus(next);
+        setRvm(t, full);
         startMatteLoop();
       }
       engineSwitching = false;
