@@ -27,8 +27,8 @@
     #controls { position: absolute; right: 10px; bottom: 80px; display: flex; flex-direction: column; gap: 8px; }
     #bottom { position: absolute; left: 10px; right: 10px; bottom: 16px; display: flex; gap: 6px; justify-content: center; flex-wrap: wrap; }
     #top > *, #controls, #bottom { pointer-events: auto; }
-    #dbg { position: absolute; left: 10px; top: 120px; display: none; gap: 6px; }
-    #dbg canvas { width: 72px; height: 128px; border: 1px solid rgba(255,255,255,.6); background: #000; }
+    #dbgbox { position: absolute; left: 10px; top: 120px; display: none; gap: 6px; }
+    #dbgbox canvas { width: 72px; height: 128px; border: 1px solid rgba(255,255,255,.6); background: #000; }
   </style>
 </head>
 <body>
@@ -37,7 +37,7 @@
     <canvas id="comp"></canvas>
 
     <div id="start">
-      <h2 style="margin:0">AR sàn + tay che model (v2)</h2>
+      <h2 style="margin:0">AR sàn + tay che model (v3)</h2>
       <div id="support" class="badge" style="max-width:340px">Đang kiểm tra WebXR...</div>
       <button id="btn-start" class="btn" disabled>Bắt đầu AR</button>
       <div class="badge" style="max-width:340px">Android: Chrome (có ARCore). iPhone: ứng dụng WebXR Viewer. Khi bắt đầu, trình duyệt sẽ xin quyền camera.</div>
@@ -50,7 +50,7 @@
         <button id="btn-exit" class="btn">Thoát</button>
       </div>
       <div id="hint"></div>
-      <div id="dbg"></div>
+      <div id="dbgbox"></div>
       <div id="controls">
         <button id="btn-occ" class="btn active">Che người: BẬT</button>
         <button id="btn-expr" class="btn">Biểu cảm: Vui</button>
@@ -83,7 +83,7 @@
 
     const $ = (id) => document.getElementById(id);
     const overlay = $('overlay'), vrmCanvas = $('vrm'), comp = $('comp'), compCtx = comp.getContext('2d');
-    const statusEl = $('status'), hintEl = $('hint'), dbgEl = $('dbg');
+    const statusEl = $('status'), hintEl = $('hint'), dbgEl = $('dbgbox');
 
     // ===== THREE (vẽ model vào canvas riêng, rồi ghép + khoét theo mặt nạ) =====
     const scene = new THREE.Scene();
@@ -332,8 +332,15 @@
     function onSelect() {
       if (performance.now() - lastUi < 500) return;   // vừa chạm vào nút giao diện
       if (!currentVrm) { hint('Model chưa tải xong.'); return; }
-      if (!reticle.visible) { hint('Chưa thấy sàn. Di chuyển máy chậm quanh mặt sàn rồi chạm lại.'); return; }
-      tmpPos.setFromMatrixPosition(reticle.matrix);
+      if (reticle.visible) {
+        tmpPos.setFromMatrixPosition(reticle.matrix);
+      } else {
+        const e = camera.matrixWorld.elements;     // chưa dò được sàn: đặt trước mặt 1.5m, thấp hơn máy 1.3m
+        fwd.set(-e[8], 0, -e[10]);
+        if (fwd.lengthSq() < 1e-4) fwd.set(0, 0, -1);
+        fwd.normalize();
+        tmpPos.set(e[12] + fwd.x * 1.5, e[13] - 1.3, e[14] + fwd.z * 1.5);
+      }
       tmpCam.setFromMatrixPosition(camera.matrixWorld);
       currentVrm.scene.position.copy(tmpPos);
       currentVrm.scene.rotation.set(0, Math.atan2(tmpPos.x - tmpCam.x, tmpPos.z - tmpCam.z), 0); // mặt nhân vật quay về phía máy
@@ -342,7 +349,7 @@
       blob.visible = true;
       placed = true;
       applyScale();
-      hint('Đã đặt nhân vật! Chạm lần nữa để đặt lại chỗ khác.', 2500);
+      hint(reticle.visible ? 'Đã đặt nhân vật! Chạm lần nữa để đặt lại chỗ khác.' : 'Chưa dò được sàn nên đã đặt ở vị trí ước lượng trước mặt. Quét sàn thêm rồi chạm lại nếu muốn đặt chính xác.', 4000);
     }
 
     function onXRFrame(t, frame) {
@@ -411,6 +418,7 @@
 
     async function startXR() {
       const support = $('support');
+      if (typeof XRCamera !== 'undefined') ensureMP();   // nạp MediaPipe song song với việc mở phiên AR
       const attempts = [
         { requiredFeatures: ['hit-test', 'dom-overlay'], optionalFeatures: ['camera-access', 'local-floor'], domOverlay: { root: overlay } },
         { requiredFeatures: ['hit-test'], optionalFeatures: ['camera-access', 'dom-overlay'], domOverlay: { root: overlay } },
@@ -434,7 +442,8 @@
       try {
         if (xrSession.requestHitTestSource) {
           const viewerSpace = await xrSession.requestReferenceSpace('viewer');
-          hitSource = await xrSession.requestHitTestSource({ space: viewerSpace });
+          try { hitSource = await xrSession.requestHitTestSource({ space: viewerSpace, entityTypes: ['plane', 'point'] }); }
+          catch (_) { hitSource = await xrSession.requestHitTestSource({ space: viewerSpace }); }
         }
       } catch (e) { hitSource = null; }
       try { glBinding = ('XRWebGLBinding' in window) ? new XRWebGLBinding(xrSession, xrGl) : null; } catch (e) { glBinding = null; }
