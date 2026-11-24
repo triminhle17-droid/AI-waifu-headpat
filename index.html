@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no" />
-  <title>TikTok Style VRM Filter - Fixed Floor & Hand Mask</title>
+  <title>TikTok Style VRM Filter - Anchored Floor</title>
   <style>
     * { box-sizing: border-box; }
     html, body { margin: 0; padding: 0; width: 100%; height: 100%; overflow: hidden; background: #0b0b0f; font-family: sans-serif; display: flex; align-items: center; justify-content: center; touch-action: none; }
@@ -31,7 +31,7 @@
   <div id="filter-frame">
     <div id="top-bar">
       <span id="status" class="badge">Khởi tạo...</span>
-      <span class="badge">VRM Filter v13</span>
+      <span class="badge">VRM Filter v14</span>
     </div>
 
     <div id="hint"></div>
@@ -49,7 +49,7 @@
       <button id="btn-engine" class="btn">Tách: Tay</button>
       <button id="btn-ar" class="btn">AR sàn: TẮT</button>
       <button id="btn-height" class="btn" style="display:none">Độ cao máy: 1.4m</button>
-      <button id="btn-track" class="btn active" style="display:none">Khóa vị trí: BẬT</button>
+      <button id="btn-track" class="btn" style="display:none">Dò sàn 2D: TẮT</button>
       <button id="btn-lat" class="btn" style="display:none">Độ trễ cảm biến: 80ms</button>
     </div>
 
@@ -68,7 +68,6 @@
   <script src="https://cdn.jsdelivr.net/npm/onnxruntime-web@1.17.3/dist/ort.min.js"></script>
 
   <script>
-    // ===== CẤU HÌNH =====
     const RVM_MODEL_URL = './rvm_mobilenetv3_fp32.onnx';
     const RVM_TIERS = [[108, 192, 0.8], [144, 256, 0.6], [180, 320, 0.5], [216, 384, 0.5], [270, 480, 0.4]];
     const AUTO_TIER = true;
@@ -155,7 +154,7 @@
         ? ` • mặt nạ ${maskFps}fps • AI ${aiMs}ms • ${RVM_H}p • UI ${uiFps}fps`
         : ` • mặt nạ ${maskFps}fps • UI ${uiFps}fps`;
       const arExtra = arMode
-        ? (performance.now() - arLastEvt < 1500 ? ` • AR sàn cố định (${arCamY.toFixed(1)}m)` : ' • Chưa có cảm biến')
+        ? (performance.now() - arLastEvt < 1500 ? ` • AR sàn neo cố định (${arCamY.toFixed(1)}m)` : ' • Chưa có cảm biến')
         : '';
       statusEl.innerText = `${camLabel} • ${rvmStatusText}${extra}${arExtra}`;
     }
@@ -185,7 +184,6 @@
     function applyModelTransform() {
       if (!currentVrm) return;
       if (arMode) {
-        // Luôn neo chân nhân vật cố định tại mặt sàn y = 0
         arPos.y = 0;
         currentVrm.scene.position.copy(arPos);
         currentVrm.scene.rotation.y = arYaw;
@@ -245,7 +243,6 @@
       ctx.restore();
     }
 
-    // ===== RVM =====
     function candidateUrls(path) {
       const list = [path];
       const m = location.hostname.match(/^(.+)\.github\.io$/);
@@ -406,7 +403,6 @@
 
     function engineReady() { return engine === 'mediapipe' ? mpReady : engine === 'hand' ? handReady : rvmReady; }
 
-    // ===== BỘ NHẬN TAY (MỞ RỘNG KHUNG CẮT ĐỂ ÔM TRỌN NGÓN TAY THẬT) =====
     async function getMPFileset() {
       if (mpFileset) return;
       let lastErr;
@@ -438,7 +434,6 @@
       throw lastErr || new Error('Không nạp được bộ nhận tay');
     }
 
-    // Vẽ đoạn thẳng thuôn dày từ (x1, y1) bán kính r1 tới (x2, y2) bán kính r2 để ôm sát thịt ngón tay
     function fillTaperedSegment(c, x1, y1, r1, x2, y2, r2) {
       const dx = x2 - x1, dy = y2 - y1;
       const len = Math.hypot(dx, dy);
@@ -469,7 +464,6 @@
       const c = matteCtx;
       c.save();
       c.clearRect(0, 0, w, h);
-      // Làm mềm nhẹ rìa để tay thật hòa mượt với model, không bị răng cưa dính viền
       c.filter = 'blur(2px)';
       c.fillStyle = c.strokeStyle = '#fff';
       c.lineCap = c.lineJoin = 'round';
@@ -479,7 +473,6 @@
         const d = (a, b) => Math.hypot(P[a][0] - P[b][0], P[a][1] - P[b][1]);
         const palm = Math.max(d(0, 9), d(5, 17) * 1.15);
 
-        // 1. Lòng bàn tay mở rộng để che kín phần mu/lòng bàn tay khi đặt lên đầu nhân vật
         c.beginPath();
         [0, 1, 2, 5, 9, 13, 17].forEach((i, k) => (k ? c.lineTo(P[i][0], P[i][1]) : c.moveTo(P[i][0], P[i][1])));
         c.closePath();
@@ -487,13 +480,12 @@
         c.lineWidth = Math.max(8, palm * 0.34);
         c.stroke();
 
-        // 2. Từng ngón tay vẽ dày và thuôn tự nhiên từ gốc ngón ra đầu ngón
         const fingers = [
-          { idx: [1, 2, 3, 4], base: 0.16, tip: 0.11 },     // ngón cái
-          { idx: [5, 6, 7, 8], base: 0.135, tip: 0.095 },   // ngón trỏ
-          { idx: [9, 10, 11, 12], base: 0.14, tip: 0.095 }, // ngón giữa
-          { idx: [13, 14, 15, 16], base: 0.13, tip: 0.09 }, // ngón áp út
-          { idx: [17, 18, 19, 20], base: 0.12, tip: 0.085 } // ngón út
+          { idx: [1, 2, 3, 4], base: 0.16, tip: 0.11 },
+          { idx: [5, 6, 7, 8], base: 0.135, tip: 0.095 },
+          { idx: [9, 10, 11, 12], base: 0.14, tip: 0.095 },
+          { idx: [13, 14, 15, 16], base: 0.13, tip: 0.09 },
+          { idx: [17, 18, 19, 20], base: 0.12, tip: 0.085 }
         ];
         for (const f of fingers) {
           const pts = f.idx;
@@ -506,7 +498,6 @@
           }
         }
 
-        // 3. Cổ tay và cẳng tay rộng hơn để không bị lẹm cạnh tay
         const mx = (P[5][0] + P[9][0] + P[13][0] + P[17][0]) / 4;
         const my = (P[5][1] + P[9][1] + P[13][1] + P[17][1]) / 4;
         const dx = P[0][0] - mx, dy = P[0][1] - my, len = Math.hypot(dx, dy) || 1;
@@ -554,7 +545,6 @@
       matteFresh = true;
     }
 
-    // ===== MEDIAPIPE SEGMENTER =====
     async function initMP() {
       setRvm('Đang nạp MediaPipe...');
       let lastErr;
@@ -688,7 +678,6 @@
       }
     }
 
-    // ===== THREE / VRM =====
     const scene = new THREE.Scene();
     const camera = new THREE.PerspectiveCamera(45, 9 / 16, 0.1, 50);
     camera.position.set(0, 1.35, 1.9);
@@ -701,7 +690,7 @@
     const ambLight = new THREE.AmbientLight(0xffffff, 0.85);
     scene.add(ambLight);
 
-    // ===== AR SÀN ỔN ĐỊNH (KHÓA ĐỘ CAO & NEO CHẶT MẶT PHẲNG y = 0) =====
+    // ===== AR SÀN NEO CỐ ĐỊNH TRONG KHÔNG GIAN =====
     const AR_FOV = 60;
     const AR_HEIGHTS = [1.0, 1.2, 1.4, 1.6];
     let arMode = false, arPlaced = false, arHeightIdx = 2, arAlpha0 = null, arLastEvt = 0, savedScale = 0.72;
@@ -751,17 +740,10 @@
       if (orientHist.length > 150) orientHist.shift();
     }
 
-    // Theo dõi ngang nhẹ nhàng, KHÔNG tự thay đổi độ cao arCamY để model không bao giờ bay lên trời
-    const TRACK_W = 120, TRACK_INTERVAL = 50, TP = 3, TS = 5, TCX = 8, TCY = 10;
-    const trackCanvas = document.createElement('canvas');
-    const trackCtx = trackCanvas.getContext('2d', { willReadFrequently: true });
-    let trackOn = true, trackPrevT = 0, kfNeeded = true;
-    let arCamX = 0, arCamY = 1.4, arCamZ = 0, arLatency = 80;
-    const kf = { feats: [], t: 0, x: 0, z: 0 };
-    const sadGrid = new Float32Array((2 * TS + 1) * (2 * TS + 1));
+    // Tắt mặc định dò 2D để tránh làm trượt vị trí model khi lia cam hoặc đưa tay vào
+    let trackOn = false, arCamX = 0, arCamY = 1.4, arCamZ = 0, arLatency = 80;
     const orientHist = [];
-    const trackQb = new THREE.Quaternion(), trackQinv = new THREE.Quaternion(), arQuat = new THREE.Quaternion();
-    const trackV = new THREE.Vector3(), trackW = new THREE.Vector3();
+    const arQuat = new THREE.Quaternion();
 
     function orientAt(t, out) {
       const n = orientHist.length;
@@ -774,153 +756,10 @@
       return out.copy(A.q).slerp(B.q, (t - A.t) / Math.max(1, B.t - A.t));
     }
 
-    function onPerson(bx, by, gw, gh) {
-      if (!matteFresh || !matteImgData) return false;
-      const mw = matteCanvas.width, mh = matteCanvas.height;
-      const mx = Math.min(mw - 1, Math.max(0, Math.floor(bx / gw * mw)));
-      const my = Math.min(mh - 1, Math.max(0, Math.floor(by / gh * mh)));
-      return matteImgData.data[(my * mw + mx) * 4 + 3] > 40;
-    }
-
-    // Chỉ giải tịnh tiến ngang (Cx, Cz) với Cy CỐ ĐỊNH theo độ cao máy -> loại bỏ hoàn toàn lỗi bay lên trời
-    function solveHorizontalPose(fr, fixedCy) {
-      const n = fr.length / 4;
-      if (n < 8) return null;
-      const w = new Float64Array(n).fill(1);
-      let cx = 0, cz = 0, inl = 0;
-      for (let it = 0; it < 4; it++) {
-        let sumW = 0, sumX = 0, sumZ = 0;
-        for (let i = 0; i < n; i++) {
-          const estX = fr[4 * i] - fr[4 * i + 2] * fixedCy;
-          const estZ = fr[4 * i + 1] - fr[4 * i + 3] * fixedCy;
-          sumW += w[i];
-          sumX += w[i] * estX;
-          sumZ += w[i] * estZ;
-        }
-        if (sumW < 1e-6) return null;
-        cx = sumX / sumW;
-        cz = sumZ / sumW;
-
-        const errs = new Float64Array(n);
-        for (let i = 0; i < n; i++) {
-          const estX = fr[4 * i] - fr[4 * i + 2] * fixedCy;
-          const estZ = fr[4 * i + 1] - fr[4 * i + 3] * fixedCy;
-          errs[i] = Math.hypot(estX - cx, estZ - cz);
-        }
-        const med = Math.max(0.005, 1.4826 * Array.from(errs).sort((a, b) => a - b)[n >> 1]);
-        inl = 0;
-        for (let i = 0; i < n; i++) {
-          const q = errs[i] / (2.5 * med);
-          w[i] = 1 / (1 + q * q);
-          if (w[i] > 0.5) inl++;
-        }
-      }
-      return [cx, cz, inl];
-    }
-
-    function matchTpl(tpl, cur, gw, cx0, cy0) {
-      const n = 2 * TS + 1;
-      let best = 1e9, bi = 0, sum = 0;
-      for (let dy = -TS; dy <= TS; dy++) for (let dx = -TS; dx <= TS; dx++) {
-        let sad = 0, k = 0;
-        for (let yy = -TP; yy <= TP; yy++) {
-          const rc = (cy0 + dy + yy) * gw + cx0 + dx;
-          for (let xx = -TP; xx <= TP; xx++) sad += Math.abs(tpl[k++] - cur[rc + xx]);
-        }
-        const idx = (dy + TS) * n + dx + TS;
-        sadGrid[idx] = sad; sum += sad;
-        if (sad < best) { best = sad; bi = idx; }
-      }
-      if (best > (sum / (n * n)) * 0.45) return null;
-      const ix = bi % n, iy = (bi / n) | 0;
-      let fx = ix, fy = iy;
-      if (ix > 0 && ix < n - 1) {
-        const a = sadGrid[bi - 1], b = sadGrid[bi], c = sadGrid[bi + 1], den = a - 2 * b + c;
-        if (den > 1e-6) fx += Math.max(-0.5, Math.min(0.5, 0.5 * (a - c) / den));
-      }
-      if (iy > 0 && iy < n - 1) {
-        const a = sadGrid[bi - n], b = sadGrid[bi], c = sadGrid[bi + n], den = a - 2 * b + c;
-        if (den > 1e-6) fy += Math.max(-0.5, Math.min(0.5, 0.5 * (a - c) / den));
-      }
-      return [cx0 + fx - TS, cy0 + fy - TS];
-    }
-
-    function makeKeyframe(gray, gw, gh, q) {
-      const tanV = Math.tan(AR_FOV * Math.PI / 360), tanH = tanV * gw / gh;
-      const m = TP + TS + 1;
-      const cw = (gw - 2 * m) / TCX, ch = (gh - 2 * m) / TCY;
-      kf.feats = [];
-      for (let cy = 0; cy < TCY; cy++) for (let cx = 0; cx < TCX; cx++) {
-        const x0 = Math.floor(m + cx * cw), y0 = Math.floor(m + cy * ch);
-        let bx = -1, by = -1, bs = 0;
-        for (let y = y0; y < y0 + ch; y += 2) for (let x = x0; x < x0 + cw; x += 2) {
-          const i = y * gw + x;
-          const sc = Math.abs(gray[i + 1] - gray[i - 1]) + Math.abs(gray[i + gw] - gray[i - gw]);
-          if (sc > bs) { bs = sc; bx = x; by = y; }
-        }
-        if (bs < 24 || onPerson(bx, by, gw, gh)) continue;
-        trackW.set(((bx + 0.5) / gw * 2 - 1) * tanH, (1 - (by + 0.5) / gh * 2) * tanV, -1).applyQuaternion(q);
-        // Chỉ lấy điểm nằm thực sự ở nửa dưới sàn (góc chúc xuống đủ sâu)
-        if (trackW.y > -0.3) continue;
-        const lam = -arCamY / trackW.y;
-        if (lam > 6) continue;
-        const tpl = new Uint8Array((2 * TP + 1) * (2 * TP + 1));
-        let k = 0;
-        for (let yy = -TP; yy <= TP; yy++) for (let xx = -TP; xx <= TP; xx++) tpl[k++] = gray[(by + yy) * gw + bx + xx];
-        kf.feats.push({ px: arCamX + lam * trackW.x, pz: arCamZ + lam * trackW.z, tpl });
-      }
-      kf.t = performance.now(); kf.x = arCamX; kf.z = arCamZ;
-      kfNeeded = false;
-    }
-
-    function trackStep(gray, gw, gh, q) {
-      if (kfNeeded || kf.feats.length < 8) { makeKeyframe(gray, gw, gh, q); return; }
-      const tanV = Math.tan(AR_FOV * Math.PI / 360), tanH = tanV * gw / gh;
-      const m = TP + TS + 1;
-      trackQinv.copy(q).invert();
-      const fr = [];
-      for (const f of kf.feats) {
-        trackV.set(f.px - arCamX, -arCamY, f.pz - arCamZ).applyQuaternion(trackQinv);
-        if (trackV.z > -0.05) continue;
-        const cx0 = Math.round(((trackV.x / -trackV.z) / tanH + 1) / 2 * gw - 0.5);
-        const cy0 = Math.round((1 - (trackV.y / -trackV.z) / tanV) / 2 * gh - 0.5);
-        if (cx0 < m || cx0 >= gw - m || cy0 < m || cy0 >= gh - m) continue;
-        const r = matchTpl(f.tpl, gray, gw, cx0, cy0);
-        if (!r || onPerson(r[0], r[1], gw, gh)) continue;
-        trackW.set(((r[0] + 0.5) / gw * 2 - 1) * tanH, (1 - (r[1] + 0.5) / gh * 2) * tanV, -1).applyQuaternion(q);
-        if (trackW.y > -0.3) continue;
-        fr.push(f.px, f.pz, -trackW.x / trackW.y, -trackW.z / trackW.y);
-      }
-      const th = solveHorizontalPose(fr, arCamY);
-      if (!th || th[2] < 8) { kfNeeded = true; return; }
-      // Chống nhảy tọa độ đột ngột
-      if (Math.hypot(th[0] - arCamX, th[1] - arCamZ) > 0.25) { kfNeeded = true; return; }
-      arCamX += 0.35 * (th[0] - arCamX);
-      arCamZ += 0.35 * (th[1] - arCamZ);
-      if (th[2] < 12 || performance.now() - kf.t > 2500 || Math.hypot(arCamX - kf.x, arCamZ - kf.z) > 0.35) kfNeeded = true;
-    }
-
-    function trackTick(now) {
-      if (!arMode || !trackOn || !arLastEvt || videoEl.readyState < 2 || !videoEl.videoWidth) return;
-      if (now - trackPrevT < TRACK_INTERVAL) return;
-      const W = camCanvas.width, H = camCanvas.height;
-      if (!W || !H) return;
-      const gw = TRACK_W, gh = Math.max(40, Math.round(TRACK_W * H / W));
-      if (trackCanvas.width !== gw || trackCanvas.height !== gh) { trackCanvas.width = gw; trackCanvas.height = gh; kfNeeded = true; }
-      drawCover(trackCtx, videoEl, gw, gh, false);
-      const rgba = trackCtx.getImageData(0, 0, gw, gh).data;
-      const gray = new Uint8Array(gw * gh);
-      for (let i = 0, j = 0; i < gray.length; i++, j += 4) gray[i] = (rgba[j] * 77 + rgba[j + 1] * 150 + rgba[j + 2] * 29) >> 8;
-      orientAt(now - arLatency, trackQb);
-      trackPrevT = now;
-      trackStep(gray, gw, gh, trackQb);
-    }
-
     function updateAr() {
       if (!arMode) return;
       orientAt(performance.now() - arLatency, arQuat);
       camera.quaternion.copy(arQuat);
-      // Giữ cố định arCamY đúng mức đã chọn để chân model luôn bám chặt mặt sàn y = 0
       arCamY = arCamHeight();
       camera.position.set(arCamX, arCamY, arCamZ);
 
@@ -934,7 +773,10 @@
       }
       if (currentVrm) {
         currentVrm.scene.visible = arPlaced;
-        if (arPlaced) currentVrm.scene.position.y = 0;
+        if (arPlaced) {
+          currentVrm.scene.position.set(arPos.x, 0, arPos.z);
+          currentVrm.scene.rotation.y = arYaw;
+        }
       }
       shadowBlob.visible = arPlaced;
     }
@@ -956,7 +798,7 @@
       arPlaced = true;
       reticle.visible = false;
       applyModelTransform();
-      hint('Đã đặt nhân vật đứng trên sàn! Chạm chỗ khác để dời vị trí.', 2500);
+      hint('Đã neo nhân vật đứng yên trên sàn! Xoay máy để ngắm quanh nhân vật.', 3000);
     }
 
     async function setAR(on) {
@@ -972,7 +814,7 @@
         }
         window.addEventListener('deviceorientation', onDeviceOrientation, true);
         arAlpha0 = null; arLastEvt = 0;
-        arCamX = 0; arCamZ = 0; arCamY = arCamHeight(); kfNeeded = true; orientHist.length = 0;
+        arCamX = 0; arCamZ = 0; arCamY = arCamHeight(); orientHist.length = 0;
         dirLight.intensity = Math.PI; dirLight.position.set(1, 2, 1).normalize(); ambLight.intensity = 0.8;
         arMode = true; arPlaced = false;
         savedScale = modelScale; modelScale = 0.6;
@@ -1032,7 +874,6 @@
       lastX = e.clientX; lastY = e.clientY;
       if (arMode) {
         if (!arPlaced) return;
-        // Kéo trên màn hình trong chế độ AR để dời model trên mặt sàn (y luôn = 0)
         arPos.x = Math.max(-4, Math.min(4, arPos.x + dx * 0.004));
         arPos.z = Math.max(-6, Math.min(2, arPos.z + dy * 0.004));
         applyModelTransform();
@@ -1052,7 +893,6 @@
       isDragging = false;
     });
 
-    // ===== CAMERA =====
     async function startCamera() {
       if (isSwitchingCam) return;
       isSwitchingCam = true;
@@ -1109,7 +949,6 @@
 
     window.addEventListener('resize', resizeFrame);
 
-    // ===== NÚT BẤM =====
     btnCam.addEventListener('click', () => {
       if (isSwitchingCam) return;
       facingMode = facingMode === 'environment' ? 'user' : 'environment';
@@ -1184,23 +1023,20 @@
 
     btnTrack.addEventListener('click', () => {
       trackOn = !trackOn;
-      kfNeeded = true;
       btnTrack.classList.toggle('active', trackOn);
-      btnTrack.textContent = 'Khóa vị trí: ' + (trackOn ? 'BẬT' : 'TẮT');
+      btnTrack.textContent = 'Dò sàn 2D: ' + (trackOn ? 'BẬT' : 'TẮT');
     });
 
     btnLat.addEventListener('click', () => {
       const opts = [0, 40, 80, 120, 160];
       arLatency = opts[(opts.indexOf(arLatency) + 1) % opts.length];
       btnLat.textContent = `Độ trễ cảm biến: ${arLatency}ms`;
-      kfNeeded = true;
     });
 
     btnHeight.addEventListener('click', () => {
       arHeightIdx = (arHeightIdx + 1) % AR_HEIGHTS.length;
       arCamY = arCamHeight();
       btnHeight.innerText = `Độ cao máy: ${arCamY.toFixed(1)}m`;
-      kfNeeded = true;
       arPlaced = false;
       hint('Đã đổi độ cao máy, chạm vào sàn để đặt lại nhân vật.', 2500);
     });
@@ -1232,7 +1068,6 @@
       engineSwitching = false;
     });
 
-    // ===== VÒNG RENDER =====
     let lastT = performance.now();
     function loop() {
       const now = performance.now();
@@ -1268,7 +1103,6 @@
         currentVrm.update(dt);
       }
 
-      trackTick(now);
       updateAr();
       renderer.render(scene, camera);
       requestAnimationFrame(loop);
