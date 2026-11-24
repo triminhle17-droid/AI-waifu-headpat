@@ -19,11 +19,20 @@
     @media (min-width: 600px) {
       #filter-frame { height: 92vh; border-radius: 22px; border: 1px solid rgba(255,255,255,.12); }
     }
+    /* Bắt buộc trong suốt khi chạy WebXR để camera ARKit/ARCore phía dưới không bị che đen */
+    html.xr-active, html.xr-active body, html.xr-active #filter-frame {
+      background: transparent !important;
+      box-shadow: none !important;
+      border: none !important;
+      max-width: 100vw !important;
+      width: 100vw !important;
+      height: 100vh !important;
+    }
     #cam-canvas, #vrm-canvas, #person-canvas {
       position: absolute; inset: 0; width: 100%; height: 100%;
     }
     #cam-canvas { z-index: 1; pointer-events: none; }
-    #vrm-canvas { z-index: 2; cursor: grab; }
+    #vrm-canvas { z-index: 2; cursor: grab; background: transparent !important; }
     #vrm-canvas:active { cursor: grabbing; }
     #person-canvas { z-index: 3; pointer-events: none; }
     #video { display: none; }
@@ -103,7 +112,6 @@
   <script type="module">
     import { ARButton } from 'https://unpkg.com/three@0.128.0/examples/jsm/webxr/ARButton.js';
 
-    // ===== CẤU HÌNH BỘ TÁCH NỀN / TAY / NGƯỜI =====
     const RVM_MODEL_URL = './rvm_mobilenetv3_fp32.onnx';
     const RVM_TIERS = [[108, 192, 0.8], [144, 256, 0.6], [180, 320, 0.5], [216, 384, 0.5], [270, 480, 0.4]];
     const AUTO_TIER = true;
@@ -176,7 +184,7 @@
     let maskFps = 0, fpsCount = 0, fpsT = performance.now(), uiFps = 0, uiCount = 0;
     let aiMs = 0, iterTimes = [], tierCooldown = 3, tierCeil = RVM_TIERS.length - 1;
 
-    // ===== TRẠNG THÁI HYBRID AR (TỰ ĐỘNG CHỌN WEBXR HOẶC iOS SENSOR) =====
+    // ===== TRẠNG THÁI HYBRID AR =====
     let webxrSupported = false;
     let arActiveMode = 'none'; // 'none' | 'webxr' | 'ios'
     let arPlaced = false;
@@ -185,7 +193,6 @@
     let arButtonEl = null;
     let hintTimer = null;
 
-    // Biến cho iOS Sensor Fallback
     const AR_FOV = 60;
     const AR_HEIGHTS = [1.0, 1.2, 1.4, 1.6];
     let arHeightIdx = 2, arAlpha0 = null, arLastEvt = 0, savedScale = 0.6;
@@ -216,7 +223,7 @@
 
     function updateStatus() {
       const camLabel = facingMode === 'environment' ? 'Cam sau' : 'Cam trước';
-      const extra = !engineReady() || !maskFps ? '' : engine === 'rvm'
+      const extra = !engineReady() || !maskFps || arActiveMode === 'webxr' ? '' : engine === 'rvm'
         ? ` • mặt nạ ${maskFps}fps • AI ${aiMs}ms • ${RVM_H}p • UI ${uiFps}fps`
         : ` • mặt nạ ${maskFps}fps • UI ${uiFps}fps`;
       const arLabel = arActiveMode === 'webxr'
@@ -745,6 +752,7 @@
     camera.position.set(0, 1.35, 1.9);
 
     const renderer = new THREE.WebGLRenderer({ canvas: vrmCanvas, antialias: true, alpha: true });
+    renderer.setClearColor(0x000000, 0);
     renderer.xr.enabled = true;
 
     const dirLight = new THREE.DirectionalLight(0xffffff, Math.PI);
@@ -752,7 +760,6 @@
     scene.add(dirLight);
     scene.add(new THREE.AmbientLight(0xffffff, 0.8));
 
-    // Vòng định vị cho WebXR (matrixAutoUpdate = false)
     const xrReticle = new THREE.Mesh(
       new THREE.RingGeometry(0.15, 0.2, 32).rotateX(-Math.PI / 2),
       new THREE.MeshBasicMaterial({ color: 0xffffff })
@@ -761,7 +768,6 @@
     xrReticle.visible = false;
     scene.add(xrReticle);
 
-    // Vòng định vị & bóng đổ cho iOS Sensor Fallback
     const iosReticle = new THREE.Mesh(
       new THREE.RingGeometry(0.14, 0.19, 32).rotateX(-Math.PI / 2),
       new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.85, depthTest: false })
@@ -777,7 +783,6 @@
     shadowBlob.visible = false;
     scene.add(shadowBlob);
 
-    // Kiểm tra WebXR immersive-ar (Android Chrome ARCore hoặc iPhone WebXR Viewer)
     async function detectXRSupport() {
       if (navigator.xr && navigator.xr.isSessionSupported) {
         try {
@@ -815,9 +820,20 @@
     xrController.addEventListener('select', onXrSelect);
     scene.add(xrController);
 
+    // Dừng hoàn toàn luồng camera 2D trước khi WebXR chiếm camera để tránh "AR Interruption Occurred"
+    function stopCamera() {
+      if (videoEl.srcObject) {
+        videoEl.srcObject.getTracks().forEach((t) => t.stop());
+        videoEl.srcObject = null;
+      }
+      camCtx.clearRect(0, 0, camCanvas.width, camCanvas.height);
+      personCtx.clearRect(0, 0, personCanvas.width, personCanvas.height);
+    }
+
     renderer.xr.addEventListener('sessionstart', () => {
       arActiveMode = 'webxr';
       arPlaced = false;
+      document.documentElement.classList.add('xr-active');
       camCanvas.style.display = 'none';
       personCanvas.style.display = 'none';
       if (currentVrm) scene.remove(currentVrm.scene);
@@ -833,6 +849,7 @@
       hitTestSourceRequested = false;
       hitTestSource = null;
       xrReticle.visible = false;
+      document.documentElement.classList.remove('xr-active');
       camCanvas.style.display = '';
       personCanvas.style.display = '';
       if (currentVrm) {
@@ -842,10 +859,10 @@
       btnAr.classList.remove('active');
       btnAr.innerText = 'AR sàn: TẮT';
       hint('');
+      startCamera();
       updateStatus();
     });
 
-    // ===== LOGIC iOS SENSOR AR (DỰ PHÒNG KHI MỞ BẰNG SAFARI THƯỜNG) =====
     function onDeviceOrientation(e) {
       if (e.alpha == null || e.beta == null || e.gamma == null) return;
       if (arAlpha0 === null) arAlpha0 = e.alpha;
@@ -913,7 +930,7 @@
       arPlaced = true;
       iosReticle.visible = false;
       applyModelTransform();
-      hint('Đã đặt nhân vật trên sàn! (Dùng app WebXR Viewer trên iOS để quét sàn 6DoF chuẩn nhất)', 3500);
+      hint('Đã đặt nhân vật trên sàn!', 3000);
     }
 
     async function toggleIosAr(on) {
@@ -1003,17 +1020,14 @@
     });
 
     async function startCamera() {
-      if (isSwitchingCam) return;
+      if (isSwitchingCam || arActiveMode === 'webxr') return;
       isSwitchingCam = true;
       resetRecurrentStates();
       matteFresh = false;
       personCtx.clearRect(0, 0, personCanvas.width, personCanvas.height);
       updateStatus();
 
-      if (videoEl.srcObject) {
-        videoEl.srcObject.getTracks().forEach((t) => t.stop());
-        videoEl.srcObject = null;
-      }
+      stopCamera();
 
       const constraintsList = facingMode === 'environment'
         ? [
@@ -1070,9 +1084,10 @@
         toggleIosAr(false);
         return;
       }
-      // Bật AR: Tự động dùng WebXR nếu máy hỗ trợ (Android Chrome / iOS WebXR Viewer), ngược lại dùng iOS Sensor
       if (webxrSupported && arButtonEl) {
-        arButtonEl.click();
+        // Giải phóng camera trước để ARKit / ARCore không bị lỗi AR Interruption Occurred
+        stopCamera();
+        setTimeout(() => arButtonEl.click(), 150);
       } else {
         toggleIosAr(true);
       }
@@ -1087,7 +1102,7 @@
     });
 
     btnCam.addEventListener('click', () => {
-      if (isSwitchingCam) return;
+      if (isSwitchingCam || arActiveMode === 'webxr') return;
       facingMode = facingMode === 'environment' ? 'user' : 'environment';
       btnCam.innerText = facingMode === 'environment' ? 'Cam: Sau' : 'Cam: Trước';
       if (arActiveMode === 'ios' && facingMode === 'user') toggleIosAr(false);
@@ -1231,7 +1246,6 @@
         personCtx.globalCompositeOperation = 'source-over';
       }
 
-      // Nhánh WebXR 6DoF (Android Chrome + iOS WebXR Viewer)
       if (frame && arActiveMode === 'webxr') {
         const referenceSpace = renderer.xr.getReferenceSpace();
         const session = renderer.xr.getSession();
@@ -1263,7 +1277,6 @@
           }
         }
       } else if (arActiveMode === 'ios') {
-        // Nhánh dự phòng cho Safari iOS thường
         updateIosAr();
       }
 
