@@ -3,89 +3,63 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no" />
-  <title>VRM Filter - Hybrid WebXR & iOS AR</title>
+  <title>TikTok Style VRM Filter - RVM</title>
   <style>
     * { box-sizing: border-box; }
-    html, body {
-      margin: 0; padding: 0; width: 100%; height: 100%;
-      overflow: hidden; background: #000; font-family: sans-serif;
-      touch-action: none;
-    }
-    html.xr-active, html.xr-active body {
-      background: transparent !important;
-    }
-    #cam-canvas, #vrm-canvas, #person-canvas {
-      position: fixed; inset: 0; width: 100%; height: 100%;
-    }
+    html, body { margin: 0; padding: 0; width: 100%; height: 100%; overflow: hidden; background: #0b0b0f; font-family: sans-serif; display: flex; align-items: center; justify-content: center; touch-action: none; }
+    #filter-frame { position: relative; width: 100vw; height: 100vh; max-width: 480px; aspect-ratio: 9 / 16; max-height: 100vh; overflow: hidden; background: #000; box-shadow: 0 12px 40px rgba(0,0,0,.7); }
+    @media (min-width: 600px) { #filter-frame { height: 92vh; border-radius: 22px; border: 1px solid rgba(255,255,255,.12); } }
+    #cam-canvas, #vrm-canvas, #person-canvas { position: absolute; inset: 0; width: 100%; height: 100%; }
     #cam-canvas { z-index: 1; pointer-events: none; }
-    #vrm-canvas { z-index: 2; cursor: grab; background: transparent !important; }
+    #vrm-canvas { z-index: 2; cursor: grab; }
     #vrm-canvas:active { cursor: grabbing; }
     #person-canvas { z-index: 3; pointer-events: none; }
     #video { display: none; }
-
-    #top-bar {
-      position: fixed; top: 12px; left: 12px; right: 12px; z-index: 20;
-      display: flex; justify-content: space-between; align-items: center; gap: 8px; pointer-events: none;
-    }
-    .badge {
-      color: #fff; background: rgba(0,0,0,.68); padding: 6px 12px;
-      border-radius: 999px; font-size: 12px; max-width: 72%;
-      overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-    }
+    #top-bar { position: absolute; top: 12px; left: 12px; right: 12px; z-index: 10; display: flex; justify-content: space-between; align-items: center; gap: 8px; pointer-events: none; }
+    .badge { color: #fff; background: rgba(0,0,0,.68); padding: 6px 12px; border-radius: 999px; font-size: 12px; max-width: 72%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     #status { pointer-events: auto; white-space: normal; line-height: 1.35; border-radius: 16px; }
-    #hint {
-      position: fixed; top: 68px; left: 14px; right: 14px; z-index: 20;
-      text-align: center; color: #fff; font-size: 14px; line-height: 1.35;
-      text-shadow: 0 1px 3px #000; pointer-events: none;
-    }
+    #hint { position: absolute; top: 64px; left: 14px; right: 14px; z-index: 10; text-align: center; color: #fff; font-size: 13px; line-height: 1.35; text-shadow: 0 1px 3px #000; pointer-events: none; }
     .ui-hidden #controls, .ui-hidden #bottom-bar .btn:not(#btn-ui) { display: none; }
     .ui-hidden #btn-ui { opacity: .55; }
-    #controls {
-      position: fixed; right: 10px; bottom: 96px; z-index: 20;
-      display: flex; flex-direction: column; gap: 8px;
-    }
-    .btn {
-      color: #fff; background: rgba(20,20,28,.75); padding: 8px 11px;
-      border-radius: 13px; font-size: 11.5px; font-weight: 600; cursor: pointer;
-      border: 1px solid rgba(255,255,255,.15); text-align: center; white-space: nowrap;
-    }
+    #controls { position: absolute; right: 10px; bottom: 96px; z-index: 10; display: flex; flex-direction: column; gap: 8px; }
+    .btn { color: #fff; background: rgba(20,20,28,.75); padding: 8px 11px; border-radius: 13px; font-size: 11.5px; font-weight: 600; cursor: pointer; border: 1px solid rgba(255,255,255,.15); text-align: center; white-space: nowrap; }
     .btn.active { background: #ff2b55; border-color: #ff2b55; }
-    #bottom-bar {
-      position: fixed; bottom: 16px; left: 10px; right: 10px; z-index: 20;
-      display: flex; flex-wrap: wrap; justify-content: center; gap: 6px;
-    }
-    #ARButton { display: none !important; }
+    #bottom-bar { position: absolute; bottom: 16px; left: 10px; right: 10px; z-index: 10; display: flex; flex-wrap: wrap; justify-content: center; gap: 6px; }
   </style>
 </head>
 <body>
-  <div id="top-bar">
-    <span id="status" class="badge">Khởi tạo...</span>
-    <span id="mode-badge" class="badge">VRM AR</span>
-  </div>
+  <div id="filter-frame">
+    <div id="top-bar">
+      <span id="status" class="badge">Khởi tạo...</span>
+      <span class="badge">RVM + VRM Filter v13</span>
+    </div>
 
-  <div id="hint"></div>
-  <canvas id="cam-canvas"></canvas>
-  <canvas id="vrm-canvas"></canvas>
-  <canvas id="person-canvas"></canvas>
-  <video id="video" playsinline webkit-playsinline autoplay muted></video>
+    <div id="hint"></div>
+    <canvas id="cam-canvas"></canvas>
+    <canvas id="vrm-canvas"></canvas>
+    <canvas id="person-canvas"></canvas>
+    <video id="video" playsinline webkit-playsinline autoplay muted></video>
 
-  <div id="controls">
-    <button id="btn-cam" class="btn">Cam: Sau</button>
-    <button id="btn-occ" class="btn active">Che người: BẬT</button>
-    <button id="btn-drag-mode" class="btn">Kéo: Trái/Phải/Lên/Xuống</button>
-    <button id="btn-expr" class="btn">Biểu cảm: Vui</button>
-    <button id="btn-pose" class="btn">Tư thế: Đứng thẳng</button>
-    <button id="btn-engine" class="btn">Tách: Tay</button>
-    <button id="btn-ar" class="btn">AR sàn: TẮT</button>
-    <button id="btn-height" class="btn" style="display:none">Độ cao máy: 1.4m</button>
-  </div>
+    <div id="controls">
+      <button id="btn-cam" class="btn">Cam: Sau</button>
+      <button id="btn-occ" class="btn active">Che người: BẬT</button>
+      <button id="btn-drag-mode" class="btn">Kéo: Trái/Phải/Lên/Xuống</button>
+      <button id="btn-expr" class="btn">Biểu cảm: Vui</button>
+      <button id="btn-pose" class="btn">Tư thế: Đứng thẳng</button>
+      <button id="btn-engine" class="btn">Tách: Tay</button>
+      <button id="btn-ar" class="btn">AR sàn: TẮT</button>
+      <button id="btn-height" class="btn" style="display:none">Độ cao máy: 1.4m</button>
+      <button id="btn-track" class="btn active" style="display:none">Theo dõi vị trí: BẬT</button>
+      <button id="btn-lat" class="btn" style="display:none">Độ trễ cảm biến: 80ms</button>
+    </div>
 
-  <div id="bottom-bar">
-    <button id="btn-pos" class="btn">Vị trí: Giữa</button>
-    <button id="btn-zoom-out" class="btn">Thu nhỏ (-)</button>
-    <button id="btn-zoom-in" class="btn">Phóng to (+)</button>
-    <button id="btn-reset" class="btn">Đặt lại</button>
-    <button id="btn-ui" class="btn">Ẩn nút</button>
+    <div id="bottom-bar">
+      <button id="btn-pos" class="btn">Vị trí: Giữa</button>
+      <button id="btn-zoom-out" class="btn">Thu nhỏ (-)</button>
+      <button id="btn-zoom-in" class="btn">Phóng to (+)</button>
+      <button id="btn-reset" class="btn">Đặt lại</button>
+      <button id="btn-ui" class="btn">Ẩn nút</button>
+    </div>
   </div>
 
   <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
@@ -93,41 +67,40 @@
   <script src="https://unpkg.com/@pixiv/three-vrm@0.6.8/lib/three-vrm.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/onnxruntime-web@1.17.3/dist/ort.min.js"></script>
 
-  <script type="module">
-    import { ARButton } from 'https://unpkg.com/three@0.128.0/examples/jsm/webxr/ARButton.js';
-
+  <script>
+    // ===== CẤU HÌNH =====
     const RVM_MODEL_URL = './rvm_mobilenetv3_fp32.onnx';
+    const RVM_EXTERNAL_DATA_URL = RVM_MODEL_URL + '.data'; // chỉ dùng nếu model có file .data đi kèm
+    // Các mức chất lượng [rộng, cao, ratio], luôn 9:16. Trang tự hạ/tăng mức theo tốc độ máy.
     const RVM_TIERS = [[108, 192, 0.8], [144, 256, 0.6], [180, 320, 0.5], [216, 384, 0.5], [270, 480, 0.4]];
-    const AUTO_TIER = true;
-    const RENDER_FPS_CAP = 30;
-    const DEFAULT_ENGINE = 'hand';
+    const AUTO_TIER = true;          // đổi false để cố định mức
+    const RENDER_FPS_CAP = 30;       // giới hạn FPS vẽ để nhường CPU cho nhận diện
+    const DEFAULT_ENGINE = 'hand';      // 'hand' = nhận bàn tay (hợp xoa đầu), 'mediapipe' = tách cả người, 'rvm' = viền đẹp nhưng nặng
     const HAND_MODEL = 'https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task';
-    const HAND_W = 216, HAND_H = 384;
+    const HAND_W = 216, HAND_H = 384;   // ảnh đưa vào bộ nhận tay (9:16)
     const ENGINES = ['hand', 'mediapipe', 'rvm'];
     const ENGINE_LABEL = { hand: 'Tách: Tay', mediapipe: 'Tách: Người', rvm: 'Tách: RVM' };
-    const MP_W = 144, MP_H = 256;
+    const MP_W = 144, MP_H = 256;       // ảnh đưa vào MediaPipe (9:16)
     const MP_MODEL = 'https://storage.googleapis.com/mediapipe-models/image_segmenter/selfie_segmenter/float16/latest/selfie_segmenter.tflite';
     const MP_BUNDLES = [
       ['https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/vision_bundle.mjs', 'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm'],
       ['https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision/vision_bundle.mjs', 'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision/wasm']
     ];
-
     let engine = DEFAULT_ENGINE;
     let tier = 2;
     let RVM_W = RVM_TIERS[tier][0], RVM_H = RVM_TIERS[tier][1], RVM_RATIO = RVM_TIERS[tier][2];
-    const ALPHA_LO = 0.25, ALPHA_HI = 0.65;
-    const RVM_USE_WORKER = true;
-    const ARM_SIGN = 1;
+    const ALPHA_LO = 0.25, ALPHA_HI = 0.65; // thu hẹp khoảng này = viền gắt hơn, ít bị mờ/ma
+    const RVM_USE_WORKER = true;     // chạy ONNX trong worker; đổi thành false nếu báo 'Run lỗi'
+    const ARM_SIGN = 1;              // đổi thành -1 nếu tay quay ngược chiều
 
+    const frameEl = document.getElementById('filter-frame');
     const statusEl = document.getElementById('status');
-    const modeBadgeEl = document.getElementById('mode-badge');
     const videoEl = document.getElementById('video');
     const camCanvas = document.getElementById('cam-canvas');
     const camCtx = camCanvas.getContext('2d');
     const vrmCanvas = document.getElementById('vrm-canvas');
     const personCanvas = document.getElementById('person-canvas');
     const personCtx = personCanvas.getContext('2d');
-    const hintEl = document.getElementById('hint');
 
     function makeCanvas(w, h, opts) {
       const c = document.createElement('canvas');
@@ -150,7 +123,10 @@
     const btnEngine = document.getElementById('btn-engine');
     const btnAr = document.getElementById('btn-ar');
     const btnHeight = document.getElementById('btn-height');
+    const btnTrack = document.getElementById('btn-track');
+    const btnLat = document.getElementById('btn-lat');
     const btnUi = document.getElementById('btn-ui');
+    const hintEl = document.getElementById('hint');
 
     let facingMode = 'environment';
     let occlusionEnabled = true;
@@ -158,43 +134,16 @@
     let matteFresh = false;
     let currentVrm = null;
 
-    let rvmSession = null, rvmWorker = null, rvmModelBytes = null;
+    let rvmSession = null;
+    let rvmWorker = null;
+    let rvmModelBytes = null;
     let handLm = null, handReady = false, handDelegate = '', mpMod = null, mpFileset = null;
     let mpSegmenter = null, mpReady = false, mpDelegate = '', mpLabels = [], mpLastTs = 0, engineSwitching = false, matteLoopStarted = false;
     let rvmReady = false;
-    let rvmStatusText = 'Sẵn sàng';
+    let rvmStatusText = 'Đang nạp RVM...';
     let rvmFullMsg = '';
     let maskFps = 0, fpsCount = 0, fpsT = performance.now(), uiFps = 0, uiCount = 0;
     let aiMs = 0, iterTimes = [], tierCooldown = 3, tierCeil = RVM_TIERS.length - 1;
-
-    // ===== TRẠNG THÁI HYBRID AR =====
-    let webxrSupported = false;
-    let arActiveMode = 'none'; // 'none' | 'webxr' | 'ios'
-    let arPlaced = false;
-    let hitTestSource = null;
-    let hitTestSourceRequested = false;
-    let arButtonEl = null;
-    let hintTimer = null;
-
-    const AR_FOV = 60;
-    const AR_HEIGHTS = [1.0, 1.2, 1.4, 1.6];
-    let arHeightIdx = 2, arAlpha0 = null, arLastEvt = 0, savedScale = 0.6;
-    let arYaw = Math.PI, arCamY = 1.4;
-    const arPos = new THREE.Vector3();
-    const arDir = new THREE.Vector3();
-    const arTarget = new THREE.Quaternion();
-    const arEuler = new THREE.Euler();
-    const arQ1 = new THREE.Quaternion(-Math.sqrt(0.5), 0, 0, Math.sqrt(0.5));
-    const arQ0 = new THREE.Quaternion();
-    const arZ = new THREE.Vector3(0, 0, 1);
-    const arQuat = new THREE.Quaternion();
-    const orientHist = [];
-
-    function hint(text, ms = 3500) {
-      hintEl.innerText = text || '';
-      clearTimeout(hintTimer);
-      if (text && ms > 0) hintTimer = setTimeout(() => { hintEl.innerText = ''; }, ms);
-    }
 
     const emptyState = () => new ort.Tensor('float32', new Float32Array(1), [1, 1, 1, 1]);
     let recStates = { r1i: emptyState(), r2i: emptyState(), r3i: emptyState(), r4i: emptyState() };
@@ -205,21 +154,13 @@
     }
 
     function updateStatus() {
-      if (arActiveMode === 'webxr') {
-        statusEl.innerText = `WebXR Sàn (6DoF) • ${arPlaced ? 'Đã đặt model' : 'Đang quét sàn'}`;
-        return;
-      }
-      if (webxrSupported && !videoEl.srcObject) {
-        statusEl.innerText = 'Sẵn sàng WebXR • Bấm "AR sàn: TẮT" để quét sàn';
-        return;
-      }
       const camLabel = facingMode === 'environment' ? 'Cam sau' : 'Cam trước';
       const extra = !engineReady() || !maskFps ? '' : engine === 'rvm'
         ? ` • mặt nạ ${maskFps}fps • AI ${aiMs}ms • ${RVM_H}p • UI ${uiFps}fps`
         : ` • mặt nạ ${maskFps}fps • UI ${uiFps}fps`;
-      const arLabel = arActiveMode === 'ios' ? ` • iOS AR (${arCamY.toFixed(1)}m)` : '';
-      statusEl.innerText = `${camLabel} • ${rvmStatusText}${extra}${arLabel}`;
+      statusEl.innerText = `${camLabel} • ${rvmStatusText}${extra}${arMode ? (performance.now() - arLastEvt < 1500 ? ' • cảm biến OK' : ' • KHÔNG có cảm biến (hãy mở bằng Safari)') : ''}${arMode && trackOn ? ' • đi: ' + trackInfo + ' • cao ' + arCamY.toFixed(2) + 'm' : ''}`;
     }
+    // Chạm vào thanh trạng thái để xem lỗi đầy đủ
     statusEl.addEventListener('click', () => { if (rvmFullMsg) alert(rvmFullMsg); });
 
     const presets = [
@@ -229,7 +170,7 @@
     ];
     let presetIdx = 0;
     let modelPos = { x: presets[0].x, y: presets[0].y, z: presets[0].z };
-    let modelScale = 0.6;
+    let modelScale = 0.72;
     let dragMode = 'xy';
 
     const expressions = [
@@ -244,16 +185,15 @@
     let poseIdx = 0;
 
     function applyModelTransform() {
-      if (!currentVrm || arActiveMode === 'webxr') return;
-      if (arActiveMode === 'ios') {
-        arPos.y = 0;
+      if (!currentVrm) return;
+      if (arMode) {
         currentVrm.scene.position.copy(arPos);
-        currentVrm.scene.rotation.set(0, arYaw, 0);
+        currentVrm.scene.rotation.y = arYaw;
         shadowBlob.position.set(arPos.x, 0.004, arPos.z);
         shadowBlob.scale.setScalar(modelScale / 0.6);
       } else {
         currentVrm.scene.position.set(modelPos.x, modelPos.y, modelPos.z);
-        currentVrm.scene.rotation.set(0, Math.PI, 0);
+        currentVrm.scene.rotation.y = Math.PI;
       }
       currentVrm.scene.scale.set(modelScale, modelScale, modelScale);
     }
@@ -278,16 +218,16 @@
       [lU, lL, rU, rL].forEach((n) => n && n.rotation.set(0, 0, 0));
       const s = ARM_SIGN;
 
-      if (poseIdx === 1) {
+      if (poseIdx === 1) {          // chào tay (tay phải giơ lên và vẫy)
         if (rU) rU.rotation.z = 1.0 * s;
         if (rL) rL.rotation.z = (0.7 + Math.sin(t * 6) * 0.3) * s;
         if (lU) lU.rotation.z = 1.2 * s;
-      } else if (poseIdx === 2) {
+      } else if (poseIdx === 2) {   // chống hông
         if (lU) lU.rotation.z = 0.9 * s;
         if (lL) lL.rotation.y = -1.2 * s;
         if (rU) rU.rotation.z = -0.9 * s;
         if (rL) rL.rotation.y = 1.2 * s;
-      } else {
+      } else {                      // đứng thẳng, hạ tay xuống
         if (lU) lU.rotation.z = 1.2 * s;
         if (rU) rU.rotation.z = -1.2 * s;
       }
@@ -306,6 +246,7 @@
     }
 
     // ===== RVM =====
+    // Nguồn dự phòng: jsDelivr đọc thẳng từ repo GitHub (có CORS, file dưới 50 MB)
     function candidateUrls(path) {
       const list = [path];
       const m = location.hostname.match(/^(.+)\.github\.io$/);
@@ -343,10 +284,12 @@
       try {
         ort.env.wasm.numThreads = 1;
         ort.env.wasm.wasmPaths = 'https://cdn.jsdelivr.net/npm/onnxruntime-web@1.17.3/dist/';
+
         const modelBytes = await fetchBytes(RVM_MODEL_URL);
         if (modelBytes.length < 1000000) {
-          throw new Error('File .onnx chỉ ' + modelBytes.length + ' byte (có thể là Git LFS pointer).');
+          throw new Error('File .onnx chỉ ' + modelBytes.length + ' byte. Có thể là Git LFS pointer hoặc sai file. File RVM mobilenetv3 fp32 thật nặng khoảng 14 MB.');
         }
+
         rvmModelBytes = modelBytes;
         let started = false;
         if (RVM_USE_WORKER) {
@@ -354,22 +297,26 @@
             await startRvmWorker(modelBytes.slice());
             started = true;
           } catch (e) {
+            console.warn('Worker lỗi, chuyển sang luồng chính:', e);
             if (rvmWorker) { rvmWorker.terminate(); rvmWorker = null; }
           }
         }
         if (!started) {
           rvmSession = await ort.InferenceSession.create(modelBytes, { executionProviders: ['wasm'] });
         }
+
         rvmReady = true;
         setRvm(rvmWorker ? 'RVM OK • worker' : 'RVM OK • luồng chính');
         startMatteLoop();
       } catch (err) {
+        console.error('RVM init error:', err);
         const msg = String((err && err.message) || err);
         rvmReady = false;
         setRvm('RVM lỗi (chạm để xem)', msg);
       }
     }
 
+    // ONNX chạy trong worker riêng để không chặn luồng vẽ. Tensor được tạo ngay trong worker.
     const RVM_WORKER_SRC = `
       importScripts('https://cdn.jsdelivr.net/npm/onnxruntime-web@1.17.3/dist/ort.min.js');
       ort.env.wasm.numThreads = 1;
@@ -459,13 +406,16 @@
     async function runRVMSegmentation(isMirror) {
       rvmInputCtx.clearRect(0, 0, RVM_W, RVM_H);
       drawCover(rvmInputCtx, videoEl, RVM_W, RVM_H, isMirror);
+
       const alphaData = await inferAlpha(canvasToNCHW(rvmInputCtx, RVM_W, RVM_H));
       if (!alphaData) return;
+
       commitMatte(alphaData, RVM_W, RVM_H);
     }
 
     function engineReady() { return engine === 'mediapipe' ? mpReady : engine === 'hand' ? handReady : rvmReady; }
 
+    // ===== Bộ nhận tay (MediaPipe Hand Landmarker): dựng mặt nạ từ 21 điểm của bàn tay + cẳng tay =====
     async function getMPFileset() {
       if (mpFileset) return;
       let lastErr;
@@ -487,7 +437,7 @@
         try {
           handLm = await mpMod.HandLandmarker.createFromOptions(mpFileset, {
             baseOptions: { modelAssetPath: HAND_MODEL, delegate },
-            runningMode: 'VIDEO', numHands: 2
+            runningMode: 'VIDEO', numHands: 1
           });
           handDelegate = delegate;
           handReady = true;
@@ -497,73 +447,38 @@
       throw lastErr || new Error('Không nạp được bộ nhận tay');
     }
 
-    function fillTaperedSegment(c, x1, y1, r1, x2, y2, r2) {
-      const dx = x2 - x1, dy = y2 - y1;
-      const len = Math.hypot(dx, dy);
-      if (len < 0.001) {
-        c.beginPath(); c.arc(x1, y1, r1, 0, Math.PI * 2); c.fill(); return;
-      }
-      const nx = -dy / len, ny = dx / len;
-      c.beginPath();
-      c.moveTo(x1 + nx * r1, y1 + ny * r1);
-      c.lineTo(x2 + nx * r2, y2 + ny * r2);
-      c.lineTo(x2 - nx * r2, y2 - ny * r2);
-      c.lineTo(x1 - nx * r1, y1 - ny * r1);
-      c.closePath(); c.fill();
-      c.beginPath(); c.arc(x1, y1, r1, 0, Math.PI * 2); c.arc(x2, y2, r2, 0, Math.PI * 2); c.fill();
-    }
-
     function drawHandMask(hands) {
       const w = RVM_W, h = RVM_H;
       if (matteCanvas.width !== w || matteCanvas.height !== h) { matteCanvas.width = w; matteCanvas.height = h; }
       const c = matteCtx;
-      c.save();
       c.clearRect(0, 0, w, h);
-      c.filter = 'blur(2px)';
       c.fillStyle = c.strokeStyle = '#fff';
       c.lineCap = c.lineJoin = 'round';
-
       for (const lm of hands) {
         const P = lm.map((p) => [p.x * w, p.y * h]);
         const d = (a, b) => Math.hypot(P[a][0] - P[b][0], P[a][1] - P[b][1]);
-        const palm = Math.max(d(0, 9), d(5, 17) * 1.15);
-
+        const palm = d(0, 9);
+        const thick = Math.max(4, palm * 0.27);
+        // lòng bàn tay
         c.beginPath();
-        [0, 1, 2, 5, 9, 13, 17].forEach((i, k) => (k ? c.lineTo(P[i][0], P[i][1]) : c.moveTo(P[i][0], P[i][1])));
-        c.closePath();
-        c.fill();
-        c.lineWidth = Math.max(8, palm * 0.34);
-        c.stroke();
-
-        const fingers = [
-          { idx: [1, 2, 3, 4], base: 0.16, tip: 0.11 },
-          { idx: [5, 6, 7, 8], base: 0.135, tip: 0.095 },
-          { idx: [9, 10, 11, 12], base: 0.14, tip: 0.095 },
-          { idx: [13, 14, 15, 16], base: 0.13, tip: 0.09 },
-          { idx: [17, 18, 19, 20], base: 0.12, tip: 0.085 }
-        ];
-        for (const f of fingers) {
-          const pts = f.idx;
-          for (let k = 0; k < pts.length - 1; k++) {
-            const t1 = k / (pts.length - 1);
-            const t2 = (k + 1) / (pts.length - 1);
-            const r1 = Math.max(3.5, palm * (f.base * (1 - t1) + f.tip * t1));
-            const r2 = Math.max(3.0, palm * (f.base * (1 - t2) + f.tip * t2));
-            fillTaperedSegment(c, P[pts[k]][0], P[pts[k]][1], r1, P[pts[k + 1]][0], P[pts[k + 1]][1], r2);
-          }
+        [0, 1, 5, 9, 13, 17].forEach((i, k) => (k ? c.lineTo(P[i][0], P[i][1]) : c.moveTo(P[i][0], P[i][1])));
+        c.closePath(); c.fill();
+        c.lineWidth = thick * 0.8; c.stroke();
+        // các ngón
+        for (const f of [[1, 2, 3, 4], [5, 6, 7, 8], [9, 10, 11, 12], [13, 14, 15, 16], [17, 18, 19, 20]]) {
+          c.beginPath(); c.moveTo(P[f[0]][0], P[f[0]][1]);
+          for (let k = 1; k < f.length; k++) c.lineTo(P[f[k]][0], P[f[k]][1]);
+          c.stroke();
         }
-
-        const mx = (P[5][0] + P[9][0] + P[13][0] + P[17][0]) / 4;
-        const my = (P[5][1] + P[9][1] + P[13][1] + P[17][1]) / 4;
+        // cổ tay và một đoạn cẳng tay kéo dài ra sau
+        const mx = (P[5][0] + P[9][0] + P[13][0] + P[17][0]) / 4, my = (P[5][1] + P[9][1] + P[13][1] + P[17][1]) / 4;
         const dx = P[0][0] - mx, dy = P[0][1] - my, len = Math.hypot(dx, dy) || 1;
-        const wristR = Math.max(6, d(5, 17) * 0.56);
-        const armEndX = P[0][0] + (dx / len) * palm * 2.2;
-        const armEndY = P[0][1] + (dy / len) * palm * 2.2;
-        fillTaperedSegment(c, P[0][0], P[0][1], wristR, armEndX, armEndY, wristR * 1.15);
+        c.lineWidth = Math.max(5, d(5, 17) * 1.1);
+        c.beginPath(); c.moveTo(P[0][0], P[0][1]);
+        c.lineTo(P[0][0] + dx / len * palm * 2.0, P[0][1] + dy / len * palm * 2.0);
+        c.stroke();
       }
-
-      c.restore();
-      matteImgData = c.getImageData(0, 0, w, h);
+      matteImgData = c.getImageData(0, 0, w, h);   // để phần theo dõi sàn biết chỗ nào là tay
       matteFresh = true;
     }
 
@@ -582,6 +497,7 @@
       matteLoop();
     }
 
+    // Ghi mặt nạ (0..1) vào matteCanvas, siết viền bằng smoothstep
     function commitMatte(alphaData, w, h) {
       if (matteCanvas.width !== w || matteCanvas.height !== h) {
         matteCanvas.width = w; matteCanvas.height = h;
@@ -600,6 +516,7 @@
       matteFresh = true;
     }
 
+    // ===== MediaPipe (chạy GPU, nhanh hơn RVM nhiều trên máy cũ) =====
     async function initMP() {
       setRvm('Đang nạp MediaPipe...');
       let lastErr;
@@ -617,10 +534,10 @@
               });
               mpDelegate = delegate;
               break;
-            } catch (e) { lastErr = e; }
+            } catch (e) { lastErr = e; console.warn('MediaPipe ' + delegate + ' lỗi:', e); }
           }
           if (mpSegmenter) break;
-        } catch (e) { lastErr = e; }
+        } catch (e) { lastErr = e; console.warn('Nạp MediaPipe lỗi:', e); }
       }
       if (!mpSegmenter) throw lastErr || new Error('Không nạp được MediaPipe');
       try { mpLabels = mpSegmenter.getLabels() || []; } catch (_) { mpLabels = []; }
@@ -657,8 +574,8 @@
     }
 
     function engineStatus(name) {
-      if (name === 'hand') return ['Tách tay OK • ' + handDelegate, ''];
-      if (name === 'mediapipe') return ['Tách người OK • ' + mpDelegate, ''];
+      if (name === 'hand') return ['Bộ nhận tay OK • ' + handDelegate, ''];
+      if (name === 'mediapipe') return ['MediaPipe OK • ' + mpDelegate, 'Nhãn mặt nạ: ' + JSON.stringify(mpLabels)];
       return [rvmWorker ? 'RVM OK • worker' : 'RVM OK • luồng chính', ''];
     }
 
@@ -677,10 +594,11 @@
           startMatteLoop();
           return;
         } catch (e) {
+          console.warn(name + ' lỗi:', e);
           errs.push(name + ': ' + String((e && e.message) || e));
         }
       }
-      setRvm('Lỗi nạp bộ tách (chạm để xem)', errs.join('\n'));
+      setRvm('Không nạp được bộ tách nào (chạm để xem)', errs.join('\n'));
     }
 
     function setTier(i) {
@@ -693,9 +611,10 @@
       iterTimes = []; tierCooldown = 3;
     }
 
+    // Vòng matting chạy riêng, không làm chậm vòng render
     async function matteLoop() {
       while (true) {
-        const ready = occlusionEnabled && engineReady() && !isSwitchingCam && arActiveMode !== 'webxr' && videoEl.readyState >= 2 && videoEl.videoWidth > 0;
+        const ready = occlusionEnabled && engineReady() && !isSwitchingCam && videoEl.readyState >= 2 && videoEl.videoWidth > 0;
         if (ready) {
           try {
             const iterStart = performance.now();
@@ -712,128 +631,80 @@
             }
             fpsCount++;
           } catch (e) {
+            console.warn('RVM frame error:', e);
             const msg = ((e && e.name) ? e.name + ': ' : '') + String((e && e.message) || e);
             if (engine === 'rvm' && rvmWorker) {
               rvmWorker.terminate(); rvmWorker = null; runResolve = runReject = null;
               try {
                 rvmSession = await ort.InferenceSession.create(rvmModelBytes, { executionProviders: ['wasm'] });
                 resetRecurrentStates();
-                setRvm('RVM OK • luồng chính', msg);
+                setRvm('RVM OK • luồng chính', 'Worker lỗi nên đã chuyển sang luồng chính: ' + msg);
                 continue;
-              } catch (_) {}
+              } catch (e2) { /* rơi xuống báo lỗi bên dưới */ }
             }
             resetRecurrentStates();
             setRvm('Run lỗi (chạm để xem)', msg);
             await new Promise((r) => setTimeout(r, 500));
           }
-          await new Promise((r) => setTimeout(r, engine === 'hand' ? 35 : engine === 'mediapipe' ? 10 : 0));
+          await new Promise((r) => setTimeout(r, engine === 'hand' ? 45 : engine === 'mediapipe' ? 10 : 0));
         } else {
           await new Promise((r) => setTimeout(r, 100));
         }
       }
     }
 
-    // ===== THREE / VRM & HYBRID WEBXR / iOS AR =====
+    // ===== THREE / VRM =====
     const scene = new THREE.Scene();
-    const camera = new THREE.PerspectiveCamera(70, window.innerWidth / window.innerHeight, 0.01, 20);
+    const camera = new THREE.PerspectiveCamera(45, 9 / 16, 0.1, 50);
     camera.position.set(0, 1.35, 1.9);
 
     const renderer = new THREE.WebGLRenderer({ canvas: vrmCanvas, antialias: true, alpha: true });
-    renderer.setPixelRatio(window.devicePixelRatio);
-    renderer.setSize(window.innerWidth, window.innerHeight);
-    renderer.xr.enabled = true;
 
-    const dirLight = new THREE.DirectionalLight(0xffffff, Math.PI);
-    dirLight.position.set(1, 2, 1).normalize();
+    const dirLight = new THREE.DirectionalLight(0xffffff, 1.15);
+    dirLight.position.set(1, 2, 2);
     scene.add(dirLight);
-    scene.add(new THREE.AmbientLight(0xffffff, 0.8));
+    const ambLight = new THREE.AmbientLight(0xffffff, 0.85);
+    scene.add(ambLight);
 
-    const xrReticle = new THREE.Mesh(
-      new THREE.RingGeometry(0.15, 0.2, 32).rotateX(-Math.PI / 2),
-      new THREE.MeshBasicMaterial({ color: 0xffffff })
-    );
-    xrReticle.matrixAutoUpdate = false;
-    xrReticle.visible = false;
-    scene.add(xrReticle);
+    // ===== AR SÀN (giả lập bằng cảm biến chuyển động, chạy được trên iPhone Safari, không cần WebXR) =====
+    const AR_FOV = 62;                       // góc nhìn dọc xấp xỉ của camera sau iPhone
+    const AR_HEIGHTS = [0.6, 0.8, 1.0, 1.2, 1.4, 1.6]; // độ cao giả định của điện thoại so với sàn (mét)
+    let arMode = false, arPlaced = false, arHeightIdx = 4, arAlpha0 = null, arLastEvt = 0, arSnap = false, savedScale = 0.72;
+    let arYaw = Math.PI, hintTimer = null;
+    const arPos = new THREE.Vector3();
+    const arDir = new THREE.Vector3();
+    const arTarget = new THREE.Quaternion();
+    const arEuler = new THREE.Euler();
+    const arQ1 = new THREE.Quaternion(-Math.sqrt(0.5), 0, 0, Math.sqrt(0.5)); // xoay -90° quanh trục X
+    const arQ0 = new THREE.Quaternion();
+    const arZ = new THREE.Vector3(0, 0, 1);
 
-    const iosReticle = new THREE.Mesh(
-      new THREE.RingGeometry(0.14, 0.19, 32).rotateX(-Math.PI / 2),
+    const reticle = new THREE.Mesh(
+      new THREE.RingGeometry(0.12, 0.17, 32).rotateX(-Math.PI / 2),
       new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.85, depthTest: false })
     );
-    iosReticle.visible = false;
-    iosReticle.renderOrder = 10;
-    scene.add(iosReticle);
+    reticle.visible = false;
+    reticle.renderOrder = 10;
+    scene.add(reticle);
 
     const shadowBlob = new THREE.Mesh(
       new THREE.CircleGeometry(0.3, 32).rotateX(-Math.PI / 2),
-      new THREE.MeshBasicMaterial({ color: 0x000000, transparent: true, opacity: 0.32, depthWrite: false })
+      new THREE.MeshBasicMaterial({ color: 0x000000, transparent: true, opacity: 0.3, depthWrite: false })
     );
     shadowBlob.visible = false;
     scene.add(shadowBlob);
 
-    function onXrSelect() {
-      if (arActiveMode === 'webxr' && xrReticle.visible && currentVrm) {
-        scene.add(currentVrm.scene);
-        currentVrm.scene.position.setFromMatrixPosition(xrReticle.matrix);
-        currentVrm.scene.quaternion.setFromRotationMatrix(xrReticle.matrix);
-        currentVrm.scene.rotateY(Math.PI);
-        currentVrm.scene.scale.set(modelScale, modelScale, modelScale);
-        arPlaced = true;
-        xrReticle.visible = false;
-        hint('Đã đặt nhân vật xuống sàn!', 3000);
-        updateStatus();
-      }
+    function hint(text, ms = 3000) {
+      hintEl.innerText = text;
+      clearTimeout(hintTimer);
+      if (text && ms > 0) hintTimer = setTimeout(() => { hintEl.innerText = ''; }, ms);
     }
 
-    const xrController = renderer.xr.getController(0);
-    xrController.addEventListener('select', onXrSelect);
-    scene.add(xrController);
-
-    function stopCamera() {
-      if (videoEl.srcObject) {
-        videoEl.srcObject.getTracks().forEach((t) => t.stop());
-        videoEl.srcObject = null;
-      }
-      camCtx.clearRect(0, 0, camCanvas.width, camCanvas.height);
-      personCtx.clearRect(0, 0, personCanvas.width, personCanvas.height);
-    }
-
-    renderer.xr.addEventListener('sessionstart', () => {
-      arActiveMode = 'webxr';
-      arPlaced = false;
-      document.documentElement.classList.add('xr-active');
-      camCanvas.style.display = 'none';
-      personCanvas.style.display = 'none';
-      if (currentVrm) scene.remove(currentVrm.scene);
-      btnAr.classList.add('active');
-      btnAr.innerText = 'AR sàn: BẬT (XR)';
-      hint('Quét sàn nhà và nhấn màn hình để đặt nhân vật', 0);
-      updateStatus();
-    });
-
-    renderer.xr.addEventListener('sessionend', () => {
-      arActiveMode = 'none';
-      arPlaced = false;
-      hitTestSourceRequested = false;
-      hitTestSource = null;
-      xrReticle.visible = false;
-      document.documentElement.classList.remove('xr-active');
-      camCanvas.style.display = '';
-      personCanvas.style.display = '';
-      if (currentVrm) {
-        scene.add(currentVrm.scene);
-        applyModelTransform();
-      }
-      btnAr.classList.remove('active');
-      btnAr.innerText = 'AR sàn: TẮT';
-      hint('');
-      if (!webxrSupported) startCamera();
-      updateStatus();
-    });
+    function arCamHeight() { return AR_HEIGHTS[arHeightIdx]; }
 
     function onDeviceOrientation(e) {
       if (e.alpha == null || e.beta == null || e.gamma == null) return;
-      if (arAlpha0 === null) arAlpha0 = e.alpha;
+      if (arAlpha0 === null) arAlpha0 = e.alpha;   // lấy hướng ban đầu làm hướng "phía trước"
       const d = Math.PI / 180;
       const orient = ((screen.orientation && screen.orientation.angle) || window.orientation || 0) * d;
       arEuler.set(e.beta * d, (e.alpha - arAlpha0) * d, -e.gamma * d, 'YXZ');
@@ -842,9 +713,25 @@
       arTarget.multiply(arQ0.setFromAxisAngle(arZ, -orient));
       arLastEvt = performance.now();
       orientHist.push({ t: arLastEvt, q: arTarget.clone() });
-      if (orientHist.length > 120) orientHist.shift();
+      if (orientHist.length > 150) orientHist.shift();
     }
 
+    // ===== THEO DÕI VỊ TRÍ BẰNG CAMERA (thử nghiệm) =====
+    // Con quay cho hướng xoay. Vị trí máy (x, y, z) lấy từ bản đồ các điểm trên sàn:
+    // ở "khung chốt" mỗi điểm sàn được ghi lại cùng toạ độ thế giới và một mẫu ảnh nhỏ; các khung sau dò lại mẫu đó
+    // rồi giải bình phương tối thiểu bền vững để ra vị trí máy tuyệt đối (không cộng dồn từng khung nên ít trôi).
+    const TRACK_W = 120, TRACK_INTERVAL = 50, TP = 3, TS = 5, TCX = 8, TCY = 10, PRIOR_Y = 3;
+    const trackCanvas = document.createElement('canvas');
+    const trackCtx = trackCanvas.getContext('2d', { willReadFrequently: true });
+    let trackOn = true, trackPrevT = 0, trackInfo = '...', kfNeeded = true;
+    let arCamX = 0, arCamY = 1.4, arCamZ = 0, arLatency = 80;
+    const kf = { feats: [], t: 0, x: 0, z: 0 };
+    const sadGrid = new Float32Array((2 * TS + 1) * (2 * TS + 1));
+    const orientHist = [];
+    const trackQb = new THREE.Quaternion(), trackQinv = new THREE.Quaternion(), arQuat = new THREE.Quaternion();
+    const trackV = new THREE.Vector3(), trackW = new THREE.Vector3();
+
+    // Hướng máy tại thời điểm t (nội suy từ lịch sử cảm biến)
     function orientAt(t, out) {
       const n = orientHist.length;
       if (!n) return out.identity();
@@ -856,84 +743,225 @@
       return out.copy(A.q).slerp(B.q, (t - A.t) / Math.max(1, B.t - A.t));
     }
 
-    function updateIosAr() {
-      if (arActiveMode !== 'ios') return;
-      orientAt(performance.now() - 80, arQuat);
-      camera.quaternion.copy(arQuat);
-      arCamY = AR_HEIGHTS[arHeightIdx];
-      camera.position.set(0, arCamY, 0);
+    function onPerson(bx, by, gw, gh) {
+      if (!matteFresh || !matteImgData) return false;
+      const mw = matteCanvas.width, mh = matteCanvas.height;
+      const mx = Math.min(mw - 1, Math.max(0, Math.floor(bx / gw * mw))), my = Math.min(mh - 1, Math.max(0, Math.floor(by / gh * mh)));
+      return matteImgData.data[(my * mw + mx) * 4 + 3] > 60;   // điểm nằm trên người/tay thì bỏ
+    }
 
-      camera.getWorldDirection(arDir);
-      const t = arDir.y < -0.05 ? arCamY / -arDir.y : Infinity;
-      if (!arPlaced && t <= 8) {
-        iosReticle.position.set(arDir.x * t, 0.003, arDir.z * t);
-        iosReticle.visible = true;
-      } else {
-        iosReticle.visible = false;
-      }
-      if (currentVrm) {
-        currentVrm.scene.visible = arPlaced;
-        if (arPlaced) {
-          currentVrm.scene.position.set(arPos.x, 0, arPos.z);
-          currentVrm.scene.rotation.y = arYaw;
+    // fr: mỗi điểm 4 số [Px, Pz, kx, kz]; ẩn số (Cx, Cy, Cz): Cx + kx*Cy = Px và Cz + kz*Cy = Pz
+    function solvePose(fr, cyPrior) {
+      const n = fr.length / 4;
+      if (n < 10) return null;
+      const w = new Float64Array(n).fill(1);
+      let th = null;
+      for (let it = 0; it < 4; it++) {
+        let m00 = 0, m01 = 0, m11 = PRIOR_Y, m12 = 0, m22 = 0, b0 = 0, b1 = PRIOR_Y * cyPrior, b2 = 0;
+        for (let i = 0; i < n; i++) {
+          const px = fr[4 * i], pz = fr[4 * i + 1], kx = fr[4 * i + 2], kz = fr[4 * i + 3], wi = w[i];
+          m00 += wi; m01 += wi * kx; m11 += wi * (kx * kx + kz * kz); m12 += wi * kz; m22 += wi;
+          b0 += wi * px; b1 += wi * (kx * px + kz * pz); b2 += wi * pz;
         }
+        const det = m00 * (m11 * m22 - m12 * m12) - m01 * m01 * m22;
+        if (Math.abs(det) < 1e-9) return null;
+        th = [
+          (b0 * (m11 * m22 - m12 * m12) - m01 * (b1 * m22 - m12 * b2)) / det,
+          (m00 * (b1 * m22 - m12 * b2) - b0 * m01 * m22) / det,
+          (m00 * (m11 * b2 - b1 * m12) - m01 * m01 * b2 + b0 * m01 * m12) / det
+        ];
+        const mags = new Float64Array(n);
+        for (let i = 0; i < n; i++) {
+          mags[i] = Math.hypot(fr[4 * i] - (th[0] + fr[4 * i + 2] * th[1]), fr[4 * i + 1] - (th[2] + fr[4 * i + 3] * th[1]));
+        }
+        const s = Math.max(0.004, 1.4826 * Array.from(mags).sort((x, y) => x - y)[n >> 1]);
+        let inl = 0;
+        for (let i = 0; i < n; i++) { const q = mags[i] / (2.5 * s); w[i] = 1 / (1 + q * q); if (w[i] > 0.5) inl++; }
+        th[3] = inl;
       }
+      return th;
+    }
+
+    // Dò mẫu ảnh 7x7 quanh vị trí dự đoán, có tinh chỉnh dưới điểm ảnh; null nếu khớp mơ hồ
+    function matchTpl(tpl, cur, gw, cx0, cy0) {
+      const n = 2 * TS + 1;
+      let best = 1e9, bi = 0, sum = 0;
+      for (let dy = -TS; dy <= TS; dy++) for (let dx = -TS; dx <= TS; dx++) {
+        let sad = 0, k = 0;
+        for (let yy = -TP; yy <= TP; yy++) {
+          const rc = (cy0 + dy + yy) * gw + cx0 + dx;
+          for (let xx = -TP; xx <= TP; xx++) sad += Math.abs(tpl[k++] - cur[rc + xx]);
+        }
+        const idx = (dy + TS) * n + dx + TS;
+        sadGrid[idx] = sad; sum += sad;
+        if (sad < best) { best = sad; bi = idx; }
+      }
+      if (best > (sum / (n * n)) * 0.45) return null;
+      const ix = bi % n, iy = (bi / n) | 0;
+      let fx = ix, fy = iy;
+      if (ix > 0 && ix < n - 1) {
+        const a = sadGrid[bi - 1], b = sadGrid[bi], c = sadGrid[bi + 1], den = a - 2 * b + c;
+        if (den > 1e-6) fx += Math.max(-0.5, Math.min(0.5, 0.5 * (a - c) / den));
+      }
+      if (iy > 0 && iy < n - 1) {
+        const a = sadGrid[bi - n], b = sadGrid[bi], c = sadGrid[bi + n], den = a - 2 * b + c;
+        if (den > 1e-6) fy += Math.max(-0.5, Math.min(0.5, 0.5 * (a - c) / den));
+      }
+      return [cx0 + fx - TS, cy0 + fy - TS];
+    }
+
+    // Khung chốt: ghi lại các điểm sàn (toạ độ thế giới + mẫu ảnh) theo vị trí máy hiện tại
+    function makeKeyframe(gray, gw, gh, q) {
+      const tanV = Math.tan(AR_FOV * Math.PI / 360), tanH = tanV * gw / gh;
+      const m = TP + TS + 1;
+      const cw = (gw - 2 * m) / TCX, ch = (gh - 2 * m) / TCY;
+      kf.feats = [];
+      for (let cy = 0; cy < TCY; cy++) for (let cx = 0; cx < TCX; cx++) {
+        const x0 = Math.floor(m + cx * cw), y0 = Math.floor(m + cy * ch);
+        let bx = -1, by = -1, bs = 0;
+        for (let y = y0; y < y0 + ch; y += 2) for (let x = x0; x < x0 + cw; x += 2) {
+          const i = y * gw + x;
+          const sc = Math.abs(gray[i + 1] - gray[i - 1]) + Math.abs(gray[i + gw] - gray[i - gw]);
+          if (sc > bs) { bs = sc; bx = x; by = y; }
+        }
+        if (bs < 24 || onPerson(bx, by, gw, gh)) continue;
+        trackW.set(((bx + 0.5) / gw * 2 - 1) * tanH, (1 - (by + 0.5) / gh * 2) * tanV, -1).applyQuaternion(q);
+        if (trackW.y > -0.2) continue;                       // chỉ lấy điểm nằm trên sàn
+        const lam = -arCamY / trackW.y;
+        const tpl = new Uint8Array((2 * TP + 1) * (2 * TP + 1));
+        let k = 0;
+        for (let yy = -TP; yy <= TP; yy++) for (let xx = -TP; xx <= TP; xx++) tpl[k++] = gray[(by + yy) * gw + bx + xx];
+        kf.feats.push({ px: arCamX + lam * trackW.x, pz: arCamZ + lam * trackW.z, tpl });
+      }
+      kf.t = performance.now(); kf.x = arCamX; kf.z = arCamZ;
+      kfNeeded = false;
+      trackInfo = 'khung chốt mới (' + kf.feats.length + ' điểm)';
+    }
+
+    function trackStep(gray, gw, gh, q) {
+      if (kfNeeded || kf.feats.length < 10) { makeKeyframe(gray, gw, gh, q); return; }
+      const tanV = Math.tan(AR_FOV * Math.PI / 360), tanH = tanV * gw / gh;
+      const m = TP + TS + 1;
+      trackQinv.copy(q).invert();
+      const fr = [];
+      for (const f of kf.feats) {
+        // vị trí dự đoán của điểm sàn này trong ảnh theo vị trí/hướng máy hiện tại
+        trackV.set(f.px - arCamX, -arCamY, f.pz - arCamZ).applyQuaternion(trackQinv);
+        if (trackV.z > -0.05) continue;
+        const cx0 = Math.round(((trackV.x / -trackV.z) / tanH + 1) / 2 * gw - 0.5);
+        const cy0 = Math.round((1 - (trackV.y / -trackV.z) / tanV) / 2 * gh - 0.5);
+        if (cx0 < m || cx0 >= gw - m || cy0 < m || cy0 >= gh - m) continue;
+        const r = matchTpl(f.tpl, gray, gw, cx0, cy0);
+        if (!r || onPerson(r[0], r[1], gw, gh)) continue;
+        trackW.set(((r[0] + 0.5) / gw * 2 - 1) * tanH, (1 - (r[1] + 0.5) / gh * 2) * tanV, -1).applyQuaternion(q);
+        if (trackW.y > -0.2) continue;
+        fr.push(f.px, f.pz, -trackW.x / trackW.y, -trackW.z / trackW.y);
+      }
+      const h0 = arCamHeight();
+      const th = solvePose(fr, h0);   // độ cao được kéo về mức bạn đã chọn, tránh trôi
+      trackInfo = th ? th[3] + '/' + (fr.length / 4) + ' điểm' : (fr.length / 4) + ' điểm (ít)';
+      if (!th || th[3] < 10) { kfNeeded = true; return; }
+      if (Math.hypot(th[0] - arCamX, th[2] - arCamZ) > 0.3 || Math.abs(th[1] - arCamY) > 0.25) { kfNeeded = true; return; }
+      arCamX += 0.8 * (th[0] - arCamX); arCamZ += 0.8 * (th[2] - arCamZ);
+      arCamY = Math.min(Math.min(2.2, h0 + 0.5), Math.max(Math.max(0.4, h0 - 0.7), arCamY + 0.5 * (th[1] - arCamY)));
+      // làm mới khung chốt khi quá cũ, máy đã đi xa, hoặc còn ít điểm khớp
+      if (th[3] < 14 || performance.now() - kf.t > 3000 || Math.hypot(arCamX - kf.x, arCamZ - kf.z) > 0.4) kfNeeded = true;
+    }
+
+    function trackTick(now) {
+      if (!arMode || !trackOn || !arLastEvt || videoEl.readyState < 2 || !videoEl.videoWidth) return;
+      if (now - trackPrevT < TRACK_INTERVAL) return;
+      const W = camCanvas.width, H = camCanvas.height;
+      if (!W || !H) return;
+      const gw = TRACK_W, gh = Math.max(40, Math.round(TRACK_W * H / W));
+      if (trackCanvas.width !== gw || trackCanvas.height !== gh) { trackCanvas.width = gw; trackCanvas.height = gh; kfNeeded = true; }
+      drawCover(trackCtx, videoEl, gw, gh, false);
+      const rgba = trackCtx.getImageData(0, 0, gw, gh).data;
+      const gray = new Uint8Array(gw * gh);
+      for (let i = 0, j = 0; i < gray.length; i++, j += 4) gray[i] = (rgba[j] * 77 + rgba[j + 1] * 150 + rgba[j + 2] * 29) >> 8;
+      orientAt(now - arLatency, trackQb);   // hướng máy lúc khung hình này được chụp
+      trackPrevT = now;
+      trackStep(gray, gw, gh, trackQb);
+    }
+
+    function updateAr() {
+      if (!arMode) return;
+      // Ảnh camera luôn trễ hơn cảm biến một chút: dùng hướng máy của ~arLatency ms trước để model khớp với hình nền
+      orientAt(performance.now() - arLatency, arQuat);
+      camera.quaternion.copy(arQuat);
+      const h = arCamY;
+      camera.position.set(arCamX, h, arCamZ);
+      // Tia từ tâm màn hình cắt mặt sàn (y = 0)
+      camera.getWorldDirection(arDir);
+      const t = arDir.y < -0.05 ? h / -arDir.y : Infinity;
+      if (t <= 8) {
+        reticle.position.set(arCamX + arDir.x * t, 0.003, arCamZ + arDir.z * t);
+        reticle.visible = true;
+      } else {
+        reticle.visible = false;
+      }
+      if (currentVrm) currentVrm.scene.visible = arPlaced;
       shadowBlob.visible = arPlaced;
     }
 
-    function placeAtIosReticle() {
-      if (arActiveMode !== 'ios' || !currentVrm) return;
-      if (!arLastEvt) {
-        hint('Hãy cho phép quyền "Chuyển động & hướng" để dùng AR trên Safari.', 5000);
-        return;
-      }
-      camera.getWorldDirection(arDir);
-      const t = arDir.y < -0.05 ? arCamY / -arDir.y : Infinity;
-      if (t > 8) {
-        hint('Nghiêng điện thoại nhẹ xuống sàn nhà để đặt nhân vật.', 3000);
-        return;
-      }
-      arPos.set(arDir.x * t, 0, arDir.z * t);
-      arYaw = Math.atan2(-arPos.x, -arPos.z);
+    function placeAtReticle() {
+      if (!arMode || !currentVrm) return;
+      if (!arLastEvt) { hint('Trình duyệt này không đưa dữ liệu cảm biến cho trang (Firefox / WebXR Viewer), nên model không thể đứng yên trên sàn. Hãy mở bằng Safari.', 6000); return; }
+      if (!reticle.visible) { hint('Hướng máy xuống sàn nhà cho tới khi thấy vòng trắng, rồi chạm lại.', 3000); return; }
+      arPos.set(reticle.position.x, 0, reticle.position.z);
+      arYaw = Math.atan2(arPos.x - arCamX, arPos.z - arCamZ);   // quay mặt nhân vật về phía camera
       arPlaced = true;
-      iosReticle.visible = false;
       applyModelTransform();
-      hint('Đã đặt nhân vật trên sàn!', 3000);
+      hint('Đã đặt nhân vật! Chạm lần nữa để đặt lại chỗ khác.', 2500);
     }
 
-    async function toggleIosAr(on) {
+    async function setAR(on) {
       if (on) {
         try {
+          // iOS bắt buộc xin quyền cảm biến ngay trong thao tác chạm
           if (typeof DeviceOrientationEvent !== 'undefined' && typeof DeviceOrientationEvent.requestPermission === 'function') {
             const r = await DeviceOrientationEvent.requestPermission();
-            if (r !== 'granted') { hint('Cần cho phép "Chuyển động & hướng" để dùng AR.', 4000); return; }
+            if (r !== 'granted') { hint('Cần cho phép "Chuyển động & hướng" để dùng AR sàn.', 4000); return; }
           }
         } catch (e) {
-          hint('Lỗi xin quyền cảm biến: ' + String((e && e.message) || e), 5000);
+          hint('Không xin được quyền cảm biến: ' + String((e && e.message) || e), 5000);
           return;
         }
-        if (!videoEl.srcObject) await startCamera();
         window.addEventListener('deviceorientation', onDeviceOrientation, true);
-        arAlpha0 = null; arLastEvt = 0; orientHist.length = 0;
-        arActiveMode = 'ios'; arPlaced = false;
+        arAlpha0 = null; arLastEvt = 0; arSnap = true;
+        arCamX = 0; arCamZ = 0; arCamY = arCamHeight(); kfNeeded = true; trackInfo = '...'; orientHist.length = 0;
+        dirLight.intensity = Math.PI; dirLight.position.set(1, 2, 1).normalize(); ambLight.intensity = 0.8;   // ánh sáng như bản WebXR
+        arMode = true; arPlaced = false;
         savedScale = modelScale; modelScale = 0.6;
+        if (facingMode !== 'environment') {
+          facingMode = 'environment';
+          btnCam.innerText = 'Cam: Sau';
+          startCamera();
+        }
         camera.fov = AR_FOV; camera.updateProjectionMatrix();
         btnHeight.style.display = '';
-        btnAr.classList.add('active'); btnAr.innerText = 'AR sàn: BẬT (iOS)';
+        btnTrack.style.display = '';
+        btnLat.style.display = '';
+        btnAr.classList.add('active'); btnAr.innerText = 'AR sàn: BẬT';
         hint('Hướng máy xuống sàn, thấy vòng trắng thì chạm màn hình để đặt nhân vật.', 0);
+        setTimeout(() => {
+          if (arMode && performance.now() - arLastEvt > 1500) hint('Không nhận được dữ liệu cảm biến. Hãy mở bằng Safari và cho phép "Chuyển động & hướng".', 0);
+        }, 2500);
       } else {
         window.removeEventListener('deviceorientation', onDeviceOrientation, true);
-        arActiveMode = 'none'; arPlaced = false;
-        iosReticle.visible = false; shadowBlob.visible = false;
+        arMode = false; arPlaced = false;
+        reticle.visible = false; shadowBlob.visible = false;
         modelScale = savedScale;
-        camera.fov = 70; camera.position.set(0, 1.35, 1.9); camera.quaternion.identity(); camera.updateProjectionMatrix();
+        camera.fov = 45; camera.position.set(0, 1.35, 1.9); camera.quaternion.identity(); camera.updateProjectionMatrix();
         if (currentVrm) currentVrm.scene.visible = true;
         btnHeight.style.display = 'none';
+        btnTrack.style.display = 'none';
+        btnLat.style.display = 'none';
+        dirLight.intensity = 1.15; dirLight.position.set(1, 2, 2); ambLight.intensity = 0.85;
         btnAr.classList.remove('active'); btnAr.innerText = 'AR sàn: TẮT';
         hint('');
       }
       applyModelTransform();
-      updateStatus();
     }
 
     new THREE.GLTFLoader().load(
@@ -941,33 +969,27 @@
       (gltf) => {
         THREE.VRM.from(gltf).then((vrm) => {
           currentVrm = vrm;
+          vrm.scene.rotation.y = Math.PI;
           applyModelTransform();
           applyExpression();
           applyPose(0);
-          if (arActiveMode !== 'webxr') scene.add(vrm.scene);
-        }).catch((err) => {
-          console.error('Lỗi khởi tạo VRM:', err);
+          scene.add(vrm.scene);
         });
       },
       undefined,
       () => { setRvm('Lỗi model.vrm'); }
     );
 
-    let isDragging = false, downX = 0, downY = 0, lastX = 0, lastY = 0;
+    let isDragging = false, lastX = 0, lastY = 0;
+
     vrmCanvas.addEventListener('pointerdown', (e) => {
-      isDragging = true; downX = lastX = e.clientX; downY = lastY = e.clientY;
+      isDragging = true; lastX = e.clientX; lastY = e.clientY;
     });
+
     window.addEventListener('pointermove', (e) => {
-      if (!isDragging || !currentVrm || arActiveMode === 'webxr') return;
+      if (arMode || !isDragging || !currentVrm) return;
       const dx = e.clientX - lastX, dy = e.clientY - lastY;
       lastX = e.clientX; lastY = e.clientY;
-      if (arActiveMode === 'ios') {
-        if (!arPlaced) return;
-        arPos.x = Math.max(-4, Math.min(4, arPos.x + dx * 0.004));
-        arPos.z = Math.max(-6, Math.min(2, arPos.z + dy * 0.004));
-        applyModelTransform();
-        return;
-      }
       if (dragMode === 'xy') {
         modelPos.x = Math.max(-1.2, Math.min(1.2, modelPos.x + dx * 0.004));
         modelPos.y = Math.max(-0.8, Math.min(1.0, modelPos.y - dy * 0.004));
@@ -976,22 +998,26 @@
       }
       applyModelTransform();
     });
+
     window.addEventListener('pointerup', (e) => {
-      if (arActiveMode === 'ios' && isDragging && Math.hypot(e.clientX - downX, e.clientY - downY) < 12) {
-        placeAtIosReticle();
-      }
+      // Trong chế độ AR, lastX/lastY giữ toạ độ lúc bắt đầu chạm: gần như không di chuyển = một lần chạm
+      if (arMode && isDragging && Math.hypot(e.clientX - lastX, e.clientY - lastY) < 12) placeAtReticle();
       isDragging = false;
     });
 
+    // ===== CAMERA =====
     async function startCamera() {
-      if (isSwitchingCam || arActiveMode === 'webxr') return;
+      if (isSwitchingCam) return;
       isSwitchingCam = true;
       resetRecurrentStates();
       matteFresh = false;
       personCtx.clearRect(0, 0, personCanvas.width, personCanvas.height);
       updateStatus();
 
-      stopCamera();
+      if (videoEl.srcObject) {
+        videoEl.srcObject.getTracks().forEach((t) => t.stop());
+        videoEl.srcObject = null;
+      }
 
       const constraintsList = facingMode === 'environment'
         ? [
@@ -1009,11 +1035,13 @@
         try {
           const stream = await navigator.mediaDevices.getUserMedia(constraints);
           videoEl.srcObject = stream;
-          try { await videoEl.play(); } catch (_) {}
+          try { await videoEl.play(); } catch (_) { /* autoplay + muted */ }
           resizeFrame();
           opened = true;
           break;
-        } catch (err) {}
+        } catch (err) {
+          console.warn('Thử camera thất bại:', err);
+        }
       }
 
       if (!opened) setRvm('Không mở được cam');
@@ -1022,53 +1050,26 @@
     }
 
     function resizeFrame() {
-      if (arActiveMode === 'webxr') return;
-      const w = window.innerWidth;
-      const h = window.innerHeight;
+      const rect = frameEl.getBoundingClientRect();
+      const w = Math.max(1, Math.floor(rect.width));
+      const h = Math.max(1, Math.floor(rect.height));
       const k = Math.min(window.devicePixelRatio || 1, 1.5);
       camCanvas.width = Math.round(w * k); camCanvas.height = Math.round(h * k);
       personCanvas.width = camCanvas.width; personCanvas.height = camCanvas.height;
       camera.aspect = w / h;
       camera.updateProjectionMatrix();
-      renderer.setPixelRatio(window.devicePixelRatio);
+      renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.5));
       renderer.setSize(w, h);
     }
 
     window.addEventListener('resize', resizeFrame);
 
-    // ===== NÚT ĐIỀU KHIỂN =====
-    btnAr.addEventListener('click', () => {
-      if (arActiveMode === 'webxr') {
-        const s = renderer.xr.getSession();
-        if (s) s.end();
-        return;
-      }
-      if (arActiveMode === 'ios') {
-        toggleIosAr(false);
-        return;
-      }
-      if (webxrSupported && arButtonEl) {
-        // Gọi trực tiếp đồng bộ ngay trong click handler (không dùng setTimeout) để giữ user gesture
-        stopCamera();
-        arButtonEl.click();
-      } else {
-        toggleIosAr(true);
-      }
-    });
-
-    btnHeight.addEventListener('click', () => {
-      arHeightIdx = (arHeightIdx + 1) % AR_HEIGHTS.length;
-      arCamY = AR_HEIGHTS[arHeightIdx];
-      btnHeight.innerText = `Độ cao máy: ${arCamY.toFixed(1)}m`;
-      arPlaced = false;
-      hint('Đã đổi độ cao máy, chạm vào sàn để đặt lại nhân vật.', 2500);
-    });
-
+    // ===== NÚT BẤM =====
     btnCam.addEventListener('click', () => {
-      if (isSwitchingCam || arActiveMode === 'webxr') return;
+      if (isSwitchingCam) return;
       facingMode = facingMode === 'environment' ? 'user' : 'environment';
       btnCam.innerText = facingMode === 'environment' ? 'Cam: Sau' : 'Cam: Trước';
-      if (arActiveMode === 'ios' && facingMode === 'user') toggleIosAr(false);
+      if (arMode && facingMode === 'user') setAR(false);   // AR sàn chỉ dùng camera sau
       startCamera();
     });
 
@@ -1111,48 +1112,56 @@
 
     btnZoomIn.addEventListener('click', () => {
       modelScale = Math.min(1.8, +(modelScale + 0.1).toFixed(2));
-      if (arActiveMode === 'webxr' && arPlaced && currentVrm) {
-        currentVrm.scene.scale.set(modelScale, modelScale, modelScale);
-      } else {
-        applyModelTransform();
-      }
+      applyModelTransform();
     });
 
     btnZoomOut.addEventListener('click', () => {
-      modelScale = Math.max(0.25, +(modelScale - 0.1).toFixed(2));
-      if (arActiveMode === 'webxr' && arPlaced && currentVrm) {
-        currentVrm.scene.scale.set(modelScale, modelScale, modelScale);
-      } else {
-        applyModelTransform();
-      }
+      modelScale = Math.max(0.35, +(modelScale - 0.1).toFixed(2));
+      applyModelTransform();
     });
 
     btnReset.addEventListener('click', () => {
       presetIdx = 0;
       modelPos = { x: presets[0].x, y: presets[0].y, z: presets[0].z };
-      modelScale = 0.6;
+      modelScale = 0.72;
+      if (arMode) { modelScale = 0.6; arPlaced = false; hint('Chạm để đặt lại nhân vật.', 2500); }
       exprIdx = 0;
       poseIdx = 0;
       btnPos.innerText = `Vị trí: ${presets[0].label}`;
       btnExpr.innerText = `Biểu cảm: ${expressions[0].label}`;
       btnPose.innerText = `Tư thế: ${poses[0]}`;
-      if (arActiveMode === 'webxr') {
-        arPlaced = false;
-        if (currentVrm) scene.remove(currentVrm.scene);
-        hint('Quét sàn nhà và nhấn màn hình để đặt lại nhân vật', 0);
-      } else if (arActiveMode === 'ios') {
-        arPlaced = false;
-        hint('Chạm vào sàn để đặt lại nhân vật.', 2500);
-        applyModelTransform();
-      } else {
-        applyModelTransform();
-      }
+      applyModelTransform();
       applyExpression();
       applyPose(0);
     });
 
+    btnAr.addEventListener('click', () => setAR(!arMode));
+
+    btnTrack.addEventListener('click', () => {
+      trackOn = !trackOn;
+      kfNeeded = true;
+      btnTrack.classList.toggle('active', trackOn);
+      btnTrack.textContent = 'Theo dõi vị trí: ' + (trackOn ? 'BẬT' : 'TẮT');
+    });
+
+    btnLat.addEventListener('click', () => {
+      const opts = [0, 40, 80, 120, 160];
+      arLatency = opts[(opts.indexOf(arLatency) + 1) % opts.length];
+      btnLat.textContent = `Độ trễ cảm biến: ${arLatency}ms`;
+      kfNeeded = true;
+    });
+
+    btnHeight.addEventListener('click', () => {
+      arHeightIdx = (arHeightIdx + 1) % AR_HEIGHTS.length;
+      btnHeight.innerText = `Độ cao máy: ${arCamHeight().toFixed(1)}m`;
+      arCamY = arCamHeight();
+      kfNeeded = true;
+      arPlaced = false;
+      hint('Đã đổi độ cao máy, chạm để đặt lại nhân vật.', 2500);
+    });
+
     btnUi.addEventListener('click', () => {
-      const hidden = document.body.classList.toggle('ui-hidden');
+      const hidden = frameEl.classList.toggle('ui-hidden');
       btnUi.innerText = hidden ? 'Hiện nút' : 'Ẩn nút';
     });
 
@@ -1180,10 +1189,10 @@
 
     // ===== VÒNG RENDER =====
     let lastT = performance.now();
-    function render(timestamp, frame) {
-      const now = timestamp || performance.now();
-      if (arActiveMode !== 'webxr' && now - lastT < 1000 / RENDER_FPS_CAP - 5) return;
-      const dt = Math.min(0.05, (now - lastT) / 1000 || 0.016);
+    function loop() {
+      const now = performance.now();
+      if (now - lastT < 1000 / RENDER_FPS_CAP - 5) { requestAnimationFrame(loop); return; }
+      const dt = Math.min(0.05, (now - lastT) / 1000);
       lastT = now;
 
       uiCount++;
@@ -1194,12 +1203,12 @@
         updateStatus();
       }
 
-      if (arActiveMode !== 'webxr' && !isSwitchingCam && videoEl.readyState >= 2 && videoEl.videoWidth > 0) {
+      if (!isSwitchingCam && videoEl.readyState >= 2 && videoEl.videoWidth > 0) {
         camCtx.clearRect(0, 0, camCanvas.width, camCanvas.height);
         drawCover(camCtx, videoEl, camCanvas.width, camCanvas.height, facingMode === 'user');
       }
 
-      if (arActiveMode !== 'webxr' && occlusionEnabled && matteFresh && !isSwitchingCam) {
+      if (occlusionEnabled && matteFresh && !isSwitchingCam) {
         const pw = personCanvas.width, ph = personCanvas.height;
         personCtx.globalCompositeOperation = 'source-over';
         personCtx.clearRect(0, 0, pw, ph);
@@ -1209,81 +1218,21 @@
         personCtx.globalCompositeOperation = 'source-over';
       }
 
-      if (frame && arActiveMode === 'webxr') {
-        const referenceSpace = renderer.xr.getReferenceSpace();
-        const session = renderer.xr.getSession();
-
-        if (!hitTestSourceRequested && session) {
-          session.requestReferenceSpace('viewer').then((viewerSpace) => {
-            session.requestHitTestSource({ space: viewerSpace }).then((source) => {
-              hitTestSource = source;
-            });
-          });
-          session.addEventListener('end', () => {
-            hitTestSourceRequested = false;
-            hitTestSource = null;
-            xrReticle.visible = false;
-          });
-          hitTestSourceRequested = true;
-        }
-
-        if (hitTestSource && referenceSpace && !xrPlaced) {
-          const hitTestResults = frame.getHitTestResults(hitTestSource);
-          if (hitTestResults.length > 0) {
-            const pose = hitTestResults[0].getPose(referenceSpace);
-            if (pose) {
-              xrReticle.visible = true;
-              xrReticle.matrix.fromArray(pose.transform.matrix);
-            }
-          } else {
-            xrReticle.visible = false;
-          }
-        }
-      } else if (arActiveMode === 'ios') {
-        updateIosAr();
-      }
-
       if (currentVrm) {
         if (poseIdx === 1) applyPose(now * 0.001);
-        currentVrm.update(arActiveMode === 'webxr' ? 0.016 : dt);
+        currentVrm.update(dt);
       }
 
+      trackTick(now);
+      updateAr();
       renderer.render(scene, camera);
+      requestAnimationFrame(loop);
     }
 
-    async function boot() {
-      resizeFrame();
-      if (navigator.xr && navigator.xr.isSessionSupported) {
-        try {
-          webxrSupported = await navigator.xr.isSessionSupported('immersive-ar');
-        } catch (_) {
-          webxrSupported = false;
-        }
-      }
-      modeBadgeEl.innerText = webxrSupported ? 'WebXR Sàn (6DoF)' : 'iOS Safari AR';
-
-      if (webxrSupported) {
-        // Trên thiết bị hỗ trợ WebXR (Android Chrome & iOS WebXR Viewer):
-        // Tạo ARButton ngay và KHÔNG mở getUserMedia trước để tránh chiếm dụng camera ARKit/ARCore
-        const arButtonOptions = {
-          requiredFeatures: ['hit-test'],
-          optionalFeatures: ['dom-overlay', 'depth-sensing'],
-          domOverlay: { root: document.body }
-        };
-        arButtonEl = ARButton.createButton(renderer, arButtonOptions);
-        document.body.appendChild(arButtonEl);
-        hint('Bấm "AR sàn: TẮT" để bật camera quét sàn nhà', 0);
-        updateStatus();
-      } else {
-        // Trên Safari iOS thường (không hỗ trợ WebXR): mở cam 2D + bộ tách tay/người bình thường
-        startCamera();
-        startEngine();
-      }
-
-      renderer.setAnimationLoop(render);
-    }
-
-    boot();
+    resizeFrame();
+    startCamera();
+    startEngine();
+    loop();
   </script>
 </body>
 </html>
